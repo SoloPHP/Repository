@@ -140,6 +140,17 @@ class Repository
     }
 
     /**
+     * Read all records
+     *
+     * @return mixed
+     */
+    public function readAll()
+    {
+        $this->limit = '';
+        return $this->read();
+    }
+
+    /**
      * Count records
      *
      * @return int
