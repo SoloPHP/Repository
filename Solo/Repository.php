@@ -56,10 +56,9 @@ class Repository
             throw new \Exception('The required value $table was not passed');
         }
         $this->alias = $this->alias ?? $this->table[0];
-        $prefix = $this->db->getPrefix();
-        $this->table = empty($prefix) ? $this->table : $prefix . '_' . $this->table;;
         $this->from = $this->db->prepare("FROM ?t AS $this->alias", $this->table);
         $this->select = "SELECT $this->select";
+        $this->prepareJoins();
         $this->where = "WHERE 1 $this->where";
         $this->limit = "LIMIT 0, $this->perPage";
         $this->orderBy = $this->orderBy ? "ORDER BY $this->orderBy" : '';
@@ -245,7 +244,7 @@ class Repository
     public function setFilter(array $filters): self
     {
         $clone = clone $this;
-        $sqlParts = $this->generateSQLQueryFromFilters($filters, $clone->where, $clone->joins);
+        $sqlParts = $this->prepareFilters($filters, $clone->where, $clone->joins);
         $clone->where = $sqlParts['where'];
         $clone->joins = $sqlParts['joins'];
 
@@ -299,6 +298,10 @@ class Repository
         return $clone;
     }
 
+    protected function prepareJoins(): void
+    {
+    }
+
     /**
      * Generate SQL query parts from filters
      *
@@ -307,7 +310,7 @@ class Repository
      * @param string $joins
      * @return array
      */
-    protected function generateSQLQueryFromFilters(array $filters, string $where, string $joins): array
+    protected function prepareFilters(array $filters, string $where, string $joins): array
     {
         return ['where' => $this->where, 'joins' => $this->joins];
     }
