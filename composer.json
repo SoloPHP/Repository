@@ -17,8 +17,6 @@
   },
   "require": {
     "php": ">=7.4",
-    "solophp/database": "dev-main"
-  },
-  "minimum-stability": "dev",
-  "prefer-stable": true
+    "solophp/database": "^1.2"
+  }
 }
