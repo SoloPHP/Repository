@@ -56,6 +56,8 @@ class Repository
             throw new \Exception('The required value $table was not passed');
         }
         $this->alias = $this->alias ?? $this->table[0];
+        $prefix = $this->db->getPrefix();
+        $this->table = empty($prefix) ? $this->table : $prefix . '_' . $this->table;;
         $this->from = $this->db->prepare("FROM ?t AS $this->alias", $this->table);
         $this->select = "SELECT $this->select";
         $this->where = "WHERE 1 $this->where";
