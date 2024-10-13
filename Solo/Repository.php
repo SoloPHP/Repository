@@ -67,7 +67,7 @@ class Repository
         }
 
         $this->alias = $this->alias ?? $this->table[0];
-        $this->from = $this->db->prepare("FROM ?t AS $this->alias", $this->table);
+        $this->from = $this->db->build("FROM ?t AS $this->alias", $this->table);
         $this->select = "SELECT $this->select";
         $this->prepareJoins();
         $this->where = "WHERE 1 $this->where";
