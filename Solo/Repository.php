@@ -69,7 +69,7 @@ class Repository
         $this->alias = $this->alias ?? $this->table[0];
         $this->from = $this->db->build("FROM ?t AS $this->alias", $this->table);
         $this->select = "SELECT $this->select";
-        $this->prepareJoins();
+        $this->buildJoins();
         $this->where = "WHERE 1 $this->where";
         $this->limit = "LIMIT 0, $this->perPage";
         $this->orderBy = $this->orderBy ? "ORDER BY $this->orderBy" : '';
@@ -253,7 +253,7 @@ class Repository
     public function filter(array $filters): self
     {
         $clone = clone $this;
-        $sqlParts = $this->prepareFilters($filters, $clone->where, $clone->joins);
+        $sqlParts = $this->buildFilters($filters, $clone->where, $clone->joins);
         $clone->where = $sqlParts['where'];
         $clone->joins = $sqlParts['joins'];
 
@@ -307,24 +307,26 @@ class Repository
     }
 
     /**
-     * Prepare the JOINs based on the current configuration.
+     * Build the JOINs based on the current configuration.
      *
      * @return void
+     * @throws Exception If build fails
      */
-    protected function prepareJoins(): void
+    protected function buildJoins(): void
     {
         // To be implemented by child classes as necessary.
     }
 
     /**
-     * Prepare the filters for the query.
+     * Build the filters for the query.
      *
      * @param array $filters The filters to be applied
      * @param string $where The current WHERE clause
      * @param string $joins The current JOINs clause
      * @return array The modified WHERE and JOINs clauses
+     * @throws Exception If build fails
      */
-    protected function prepareFilters(array $filters, string $where, string $joins): array
+    protected function buildFilters(array $filters, string $where, string $joins): array
     {
         // To be implemented by child classes as necessary.
         return ['where' => $where, 'joins' => $joins];
