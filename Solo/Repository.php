@@ -201,9 +201,16 @@ class Repository
         $emptyRecord = new stdClass();
 
         foreach ($this->db->results() as $row) {
-            if ($row->Field !== 'id' || $row->Key !== 'PRI') {
-                $emptyRecord->{$row->Field} = $this->convertMySQLType($row->Type, $row->Default);
+            if (
+                $row->Field == 'id' ||
+                $row->Key == 'PRI' ||
+                in_array($row->Default, ['current_timestamp()', 'current_timestamp', 'CURRENT_TIMESTAMP'])
+            ) {
+                continue;
             }
+
+            $emptyRecord->{$row->Field} = $this->convertMySQLType($row->Type, $row->Default);
+
         }
 
         return $emptyRecord;
