@@ -92,20 +92,20 @@ class Repository
     }
 
     /**
-     * Update an existing record in the database.
+     * Update an existing record(s) in the database.
      *
-     * @param int $id The ID of the record to update
-     * @param array $data Data for updating the record
+     * @param int|array $id The ID or array of IDs of the records to update
+     * @param array $data Data for updating the record(s)
      * @param bool $sanitizeFields Whether to sanitize fields based on the table structure
-     * @return int The ID of the updated record
+     * @return int count of the updated record(s)
      */
-    public function update(int $id, array $data, bool $sanitizeFields = false): int
+    public function update($id, array $data, bool $sanitizeFields = false): int
     {
         if ($sanitizeFields) {
             $data = $this->sanitizeFields($data);
         }
-        $this->db->query("UPDATE ?t SET ?A WHERE id = ?i", $this->table, $data, $id);
-        return $id;
+        $this->db->query("UPDATE ?t SET ?A WHERE id IN(?a)", $this->table, $data, (array)$id);
+        return $this->db->rowCount();
     }
 
     /**
