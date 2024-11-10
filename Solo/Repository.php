@@ -14,7 +14,7 @@ class Repository
     protected string $table;
 
     /** Table alias */
-    private string $alias;
+    protected string $alias;
 
     /** SELECT query part */
     protected string $select = '*';
