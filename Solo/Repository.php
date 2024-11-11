@@ -198,57 +198,30 @@ class Repository
     public function createEmptyRecord(): object
     {
         $this->db->query("DESCRIBE ?t", $this->table);
+        $description = $this->db->results();
+
         $emptyRecord = new stdClass();
 
-        foreach ($this->db->results() as $row) {
-            if (
-                $row->Field == 'id' ||
-                $row->Key == 'PRI' ||
-                in_array($row->Default, ['current_timestamp()', 'current_timestamp', 'CURRENT_TIMESTAMP'])
-            ) {
+        foreach ($description as $column) {
+            if ($column->Key == 'PRI' || in_array($column->Default, ['current_timestamp()', 'current_timestamp', 'CURRENT_TIMESTAMP']) ) {
                 continue;
             }
 
-            $emptyRecord->{$row->Field} = $this->convertMySQLType($row->Type, $row->Default);
+            if($column->Null == 'YES') {
+                $emptyRecord->{$column->Field} = null;
+                continue;
+            }
+
+            if($column->Default !== null) {
+                $emptyRecord->{$column->Field} = $column->Default;
+                continue;
+            }
+
+            $emptyRecord->{$column->Field} = '';
 
         }
 
         return $emptyRecord;
-    }
-
-    /**
-     * Convert MySQL type to PHP type.
-     *
-     * @param string $type MySQL type
-     * @param mixed $value Value to be converted
-     * @return mixed The converted value
-     */
-    private function convertMySQLType(string $type, $value)
-    {
-        if ($value === null) {
-            return null;
-        }
-
-        if ($value === '') {
-            return '';
-        }
-
-        $mainType = strtoupper(explode('(', $type)[0]);
-        switch ($mainType) {
-            case 'INT':
-            case 'TINYINT':
-            case 'SMALLINT':
-            case 'MEDIUMINT':
-            case 'BIGINT':
-                return (int)$value;
-            case 'DECIMAL':
-            case 'NUMERIC':
-            case 'FLOAT':
-            case 'DOUBLE':
-                return (float)$value;
-            default:
-                return $value;
-        }
     }
 
     /**
