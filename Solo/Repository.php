@@ -203,17 +203,17 @@ class Repository
         $emptyRecord = new stdClass();
 
         foreach ($description as $column) {
-            if ($column->Key == 'PRI' || in_array($column->Default, ['current_timestamp()', 'current_timestamp', 'CURRENT_TIMESTAMP']) ) {
+            if ($column->Key == 'PRI' || in_array($column->Default, ['current_timestamp()', 'current_timestamp', 'CURRENT_TIMESTAMP'])) {
                 continue;
             }
 
-            if($column->Null == 'YES') {
+            if ($column->Null == 'YES') {
                 $emptyRecord->{$column->Field} = null;
                 continue;
             }
 
-            if($column->Default !== null) {
-                $emptyRecord->{$column->Field} = $column->Default;
+            if ($column->Default !== null) {
+                $emptyRecord->{$column->Field} = $this->castDefaultValue($column->Type, $column->Default);
                 continue;
             }
 
@@ -222,6 +222,30 @@ class Repository
         }
 
         return $emptyRecord;
+    }
+
+    /**
+     * Casts a MySQL default value to the appropriate PHP type based on the MySQL data type.
+     *
+     * @param string $type MySQL data type (e.g., "int", "varchar", "json").
+     * @param mixed $default The default value retrieved from the database.
+     * @return mixed The value cast to the corresponding PHP type.
+     */
+    private function castDefaultValue(string $type, $default)
+    {
+        switch (true) {
+            case preg_match('/tinyint\(1\)|bool|boolean/', $type):
+                return (bool)$default;
+            case preg_match('/int|serial/', $type):
+                return (int)$default;
+            case preg_match('/float|double|real|decimal|dec|fixed|numeric/', $type):
+                return (float)$default;
+            case preg_match('/date|time|year/', $type):
+            case preg_match('/char|text|blob|enum|set|binary|varbinary|json/', $type):
+                return (string)$default;
+            default:
+                return $default;
+        }
     }
 
     /**
