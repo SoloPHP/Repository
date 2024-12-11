@@ -67,9 +67,9 @@ class Repository
         }
 
         $this->alias = $this->alias ?? $this->table[0];
-        $this->from = $this->db->build("FROM ?t AS $this->alias", $this->table);
+        $this->from = $this->db->prepare("FROM ?t AS $this->alias", $this->table);
         $this->select = "SELECT $this->select";
-        $this->buildJoins();
+        $this->prepareJoins();
         $this->where = "WHERE 1 $this->where";
         $this->limit = "LIMIT 0, $this->perPage";
         $this->orderBy = $this->orderBy ? "ORDER BY $this->orderBy" : '';
@@ -87,7 +87,7 @@ class Repository
         if ($sanitizeFields) {
             $data = $this->sanitizeFields($data);
         }
-        $this->db->query("INSERT INTO ?t SET ?A", $this->table, $data);
+        $this->db->executeQuery("INSERT INTO ?t SET ?A", $this->table, $data);
         return $this->db->lastInsertId();
     }
 
@@ -104,7 +104,7 @@ class Repository
         if ($sanitizeFields) {
             $data = $this->sanitizeFields($data);
         }
-        $this->db->query("UPDATE ?t SET ?A WHERE id IN(?a)", $this->table, $data, (array)$id);
+        $this->db->executeQuery("UPDATE ?t SET ?A WHERE id IN(?a)", $this->table, $data, (array)$id);
         return $this->db->rowCount();
     }
 
@@ -116,7 +116,7 @@ class Repository
      */
     public function delete(int $id): int
     {
-        $this->db->query("DELETE FROM ?t WHERE id = ?i LIMIT 1", $this->table, $id);
+        $this->db->executeQuery("DELETE FROM ?t WHERE id = ?i LIMIT 1", $this->table, $id);
         return $this->db->rowCount();
     }
 
@@ -135,9 +135,9 @@ class Repository
         $this->orderBy
         $this->limit";
 
-        $this->db->query($query);
+        $this->db->executeQuery($query);
 
-        return $readOne ? $this->db->result() : $this->db->results($this->primaryKey);
+        return $readOne ? $this->db->fetchObject() : $this->db->results($this->primaryKey);
     }
 
     /**
@@ -172,8 +172,8 @@ class Repository
         $select = 'SELECT COUNT(*) AS count';
         $query = "$select $this->from $this->joins $this->where";
 
-        $this->db->query($query);
-        return $this->db->result('count');
+        $this->db->executeQuery($query);
+        return $this->db->fetchObject('count');
     }
 
     /**
@@ -184,8 +184,8 @@ class Repository
      */
     private function sanitizeFields(array $data): array
     {
-        $this->db->query("DESCRIBE ?t", $this->table);
-        $fields = array_column($this->db->results(), 'Field');
+        $this->db->executeQuery("DESCRIBE ?t", $this->table);
+        $fields = array_column($this->db->fetchAll(), 'Field');
 
         return array_intersect_key($data, array_flip($fields));
     }
@@ -197,8 +197,8 @@ class Repository
      */
     public function createEmptyRecord(): object
     {
-        $this->db->query("DESCRIBE ?t", $this->table);
-        $description = $this->db->results();
+        $this->db->executeQuery("DESCRIBE ?t", $this->table);
+        $description = $this->db->fetchAll();
 
         $emptyRecord = new stdClass();
 
@@ -257,7 +257,7 @@ class Repository
     public function filter(array $filters): self
     {
         $clone = clone $this;
-        $sqlParts = $this->buildFilters($filters, $clone->where, $clone->joins);
+        $sqlParts = $this->prepareFilters($filters, $clone->where, $clone->joins);
         $clone->where = $sqlParts['where'];
         $clone->joins = $sqlParts['joins'];
 
@@ -311,12 +311,12 @@ class Repository
     }
 
     /**
-     * Build the JOINs based on the current configuration.
+     * Prepare the JOINs based on the current configuration.
      *
      * @return void
-     * @throws Exception If build fails
+     * @throws Exception If prepare fails
      */
-    protected function buildJoins(): void
+    protected function prepareJoins(): void
     {
         // To be implemented by child classes as necessary.
     }
@@ -328,9 +328,9 @@ class Repository
      * @param string $where The current WHERE clause
      * @param string $joins The current JOINs clause
      * @return array The modified WHERE and JOINs clauses
-     * @throws Exception If build fails
+     * @throws Exception If prepare fails
      */
-    protected function buildFilters(array $filters, string $where, string $joins): array
+    protected function prepareFilters(array $filters, string $where, string $joins): array
     {
         // To be implemented by child classes as necessary.
         return ['where' => $where, 'joins' => $joins];
