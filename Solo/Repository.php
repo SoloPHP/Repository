@@ -6,7 +6,7 @@ use Solo\Database;
 use Exception;
 use stdClass;
 
-class Repository
+abstract class Repository
 {
     protected Database $db;
 
