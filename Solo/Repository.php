@@ -137,7 +137,7 @@ abstract class Repository
 
         $this->db->executeQuery($query);
 
-        return $readOne ? $this->db->fetchObject() : $this->db->results($this->primaryKey);
+        return $readOne ? $this->db->fetchObject() : $this->db->fetchAll($this->primaryKey);
     }
 
     /**
