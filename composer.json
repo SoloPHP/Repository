@@ -17,6 +17,6 @@
   },
   "require": {
     "php": ">=8.2",
-    "solophp/database": "^2.2"
+    "solophp/database": "^2.4"
   }
 }
