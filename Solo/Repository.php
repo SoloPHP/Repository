@@ -87,7 +87,7 @@ abstract class Repository
         if ($sanitizeFields) {
             $data = $this->sanitizeFields($data);
         }
-        $this->db->executeQuery("INSERT INTO ?t SET ?A", $this->table, $data);
+        $this->db->query("INSERT INTO ?t SET ?A", $this->table, $data);
         return $this->db->lastInsertId();
     }
 
@@ -104,7 +104,7 @@ abstract class Repository
         if ($sanitizeFields) {
             $data = $this->sanitizeFields($data);
         }
-        $this->db->executeQuery("UPDATE ?t SET ?A WHERE id IN(?a)", $this->table, $data, (array)$id);
+        $this->db->query("UPDATE ?t SET ?A WHERE id IN(?a)", $this->table, $data, (array)$id);
         return $this->db->rowCount();
     }
 
@@ -116,7 +116,7 @@ abstract class Repository
      */
     public function delete(int $id): int
     {
-        $this->db->executeQuery("DELETE FROM ?t WHERE id = ?i LIMIT 1", $this->table, $id);
+        $this->db->query("DELETE FROM ?t WHERE id = ?i LIMIT 1", $this->table, $id);
         return $this->db->rowCount();
     }
 
@@ -135,7 +135,7 @@ abstract class Repository
         $this->orderBy
         $this->limit";
 
-        $this->db->executeQuery($query);
+        $this->db->query($query);
 
         return $readOne ? $this->db->fetchObject() : $this->db->fetchAll($this->primaryKey);
     }
@@ -172,7 +172,7 @@ abstract class Repository
         $select = 'SELECT COUNT(*) AS count';
         $query = "$select $this->from $this->joins $this->where";
 
-        $this->db->executeQuery($query);
+        $this->db->query($query);
         return $this->db->fetchObject('count');
     }
 
@@ -184,7 +184,7 @@ abstract class Repository
      */
     private function sanitizeFields(array $data): array
     {
-        $this->db->executeQuery("DESCRIBE ?t", $this->table);
+        $this->db->query("DESCRIBE ?t", $this->table);
         $fields = array_column($this->db->fetchAll(), 'Field');
 
         return array_intersect_key($data, array_flip($fields));
@@ -197,7 +197,7 @@ abstract class Repository
      */
     public function createEmptyRecord(): object
     {
-        $this->db->executeQuery("DESCRIBE ?t", $this->table);
+        $this->db->query("DESCRIBE ?t", $this->table);
         $description = $this->db->fetchAll();
 
         $emptyRecord = new stdClass();
