@@ -1,8 +1,14 @@
 {
   "name": "solophp/repository",
   "type": "library",
-  "description": "Flexible Base class for Database Repositories",
-  "keywords": ["repository","database"],
+  "description": "A flexible base repository class for PHP 8+ with query builder and CRUD operations.",
+  "keywords": [
+    "repository",
+    "database",
+    "base-class",
+    "query-builder",
+    "crud"
+  ],
   "license": "MIT",
   "authors": [
     {
@@ -17,6 +23,6 @@
   },
   "require": {
     "php": ">=8.2",
-    "solophp/database": "^2.4"
+    "solophp/database": "^2.5"
   }
 }
