@@ -1,6 +1,6 @@
 # Base Repository Class
 
-A flexible base repository class for PHP 8+ with query builder and CRUD operations.
+A flexible base repository class for PHP 8+ with query builder and CRUD operations, featuring immutable query parameters.
 
 ## Installation
 
@@ -12,8 +12,9 @@ The package will automatically install required dependencies, including [solophp
 
 ## Features
 
-- Clean implementation of Repository pattern
+- Clean implementation of Repository pattern with immutability
 - Fluent QueryBuilder interface
+- Separation of concerns between Query Parameters and Builder
 - Type-safe and IDE-friendly
 - Automatic field sanitization
 - Advanced filtering system:
@@ -27,6 +28,7 @@ The package will automatically install required dependencies, including [solophp
 - Built-in pagination
 - Sorting support
 - JOIN operations support
+- Transaction support
 - Automatic default values based on database schema
 - Zero configuration for basic usage
 - Easily extendable
@@ -47,13 +49,13 @@ interface QueryBuilderInterface
     public function orderBy(?string ...$order): self;
 
     // Set the page number for pagination
-    public function page(?int $page): self;
+    public function page(int|string|null $page): self;
 
     // Set the number of items per page
-    public function perPage(?int $perPage): self;
+    public function perPage(int|string|null $perPage): self;
 
-    // Set both page and per page at once
-    public function limit(int $page, int $perPage): self;
+    // Set primary key for result indexing
+    public function primaryKey(string $primaryKey): self;
 }
 ```
 
@@ -87,18 +89,23 @@ interface RepositoryInterface extends QueryBuilderInterface
 
     // Create an empty record with default values
     public function createEmptyRecord(): object;
+
+    // Transaction management
+    public function beginTransaction(): bool;
+    public function commit(): bool;
+    public function rollback(): bool;
 }
 ```
 
 ## Implementation Example
 
 ```php
-class ProductsRepository extends BaseRepository
+class ProductsRepository extends Repository
 {
     protected string $table = 'products';
     protected string $alias = 'p';
 
-    protected function initSelect(): string
+    protected function select(): string
     {
         return '
             p.*,
@@ -106,14 +113,14 @@ class ProductsRepository extends BaseRepository
         ';
     }
 
-    protected function initJoins(): string
+    protected function joins(): string
     {
         return '
             LEFT JOIN categories c ON c.id = p.category_id
         ';
     }
 
-    protected function initFilters(): array
+    protected function filters(): array
     {
         return [
             'id' => 'AND p.id IN(?a)',
@@ -155,10 +162,10 @@ $products = $repository
     ])
     ->read();
 
-// Read with pagination
+// Read with pagination (accepts both int and string)
 $products = $repository
-    ->page(2)
-    ->perPage(20)
+    ->page(2)        // or ->page('2')
+    ->perPage(20)    // or ->perPage('20')
     ->read();
 
 // Read with sorting
@@ -178,6 +185,28 @@ $products = $repository->readAll();
 $count = $repository
     ->filter(['enabled' => 1])
     ->count();
+```
+
+### Using Transactions
+
+```php
+try {
+    $repository->beginTransaction();
+    
+    $id = $repository->create([
+        'name' => 'New Product',
+        'enabled' => 1
+    ]);
+    
+    $categoryRepo->update($id, [
+        'category_id' => 2
+    ]);
+    
+    $repository->commit();
+} catch (\Exception $e) {
+    $repository->rollback();
+    throw $e;
+}
 ```
 
 ### Updating Records
@@ -229,7 +258,7 @@ The repository supports various placeholder types from solophp/database:
 
 Example:
 ```php
-protected function initFilters(): array
+protected function filters(): array
 {
     return [
         'id' => 'AND p.id IN(?a)',                    // Array of IDs
@@ -250,6 +279,7 @@ protected function initFilters(): array
         )
     ];
 }
+```
 
 ## Requirements
 
