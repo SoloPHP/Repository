@@ -11,212 +11,197 @@ final class QueryParameters
         private readonly string $orderBy = '',
         private readonly string $limit = '',
         private readonly string $primaryKey = '',
-        private readonly string $page = '1',
-        private readonly string $perPage = '25',
-        private readonly array  $filters = []
+        private readonly int    $page = 1,
+        private readonly int    $perPage = 25,
+        private readonly array  $filters = [],
+        private readonly string $filterJoins = '',
+        private readonly string $filterSelect = ''
     )
     {
     }
 
-    public function getSelect(): string
-    {
-        return $this->select;
-    }
-
-    public function getJoins(): string
-    {
-        return $this->joins;
-    }
-
-    public function getWhere(): string
-    {
-        return $this->where;
-    }
-
-    public function getOrderBy(): string
-    {
-        return $this->orderBy;
-    }
-
-    public function getLimit(): string
-    {
-        return $this->limit;
-    }
-
-    public function getPrimaryKey(): string
-    {
-        return $this->primaryKey;
-    }
-
-    public function getPage(): string
-    {
-        return $this->page;
-    }
-
-    public function getPerPage(): string
-    {
-        return $this->perPage;
-    }
-
-    public function getFilters(): array
-    {
-        return $this->filters;
-    }
+    public function getSelect(): string { return $this->select; }
+    public function getJoins(): string { return $this->joins; }
+    public function getWhere(): string { return $this->where; }
+    public function getOrderBy(): string { return $this->orderBy; }
+    public function getLimit(): string { return $this->limit; }
+    public function getPrimaryKey(): string { return $this->primaryKey; }
+    public function getFilterJoins(): string { return $this->filterJoins; }
+    public function getFilterSelect(): string { return $this->filterSelect; }
 
     public function withSelect(string $select): self
     {
         return new self(
-            $select,
-            $this->joins,
-            $this->where,
-            $this->orderBy,
-            $this->limit,
-            $this->primaryKey,
-            $this->page,
-            $this->perPage,
-            $this->filters
+            select: $select,
+            joins: $this->joins,
+            where: $this->where,
+            orderBy: $this->orderBy,
+            limit: $this->limit,
+            primaryKey: $this->primaryKey,
+            page: $this->page,
+            perPage: $this->perPage,
+            filters: $this->filters,
+            filterJoins: $this->filterJoins,
+            filterSelect: $this->filterSelect
         );
     }
 
     public function withJoins(string $joins): self
     {
         return new self(
-            $this->select,
-            $joins,
-            $this->where,
-            $this->orderBy,
-            $this->limit,
-            $this->primaryKey,
-            $this->page,
-            $this->perPage,
-            $this->filters
+            select: $this->select,
+            joins: $joins,
+            where: $this->where,
+            orderBy: $this->orderBy,
+            limit: $this->limit,
+            primaryKey: $this->primaryKey,
+            page: $this->page,
+            perPage: $this->perPage,
+            filters: $this->filters,
+            filterJoins: $this->filterJoins,
+            filterSelect: $this->filterSelect
         );
     }
 
     public function withWhere(string $where): self
     {
         return new self(
-            $this->select,
-            $this->joins,
-            $where,
-            $this->orderBy,
-            $this->limit,
-            $this->primaryKey,
-            $this->page,
-            $this->perPage,
-            $this->filters
+            select: $this->select,
+            joins: $this->joins,
+            where: $where,
+            orderBy: $this->orderBy,
+            limit: $this->limit,
+            primaryKey: $this->primaryKey,
+            page: $this->page,
+            perPage: $this->perPage,
+            filters: $this->filters,
+            filterJoins: $this->filterJoins,
+            filterSelect: $this->filterSelect
         );
     }
 
     public function withOrderBy(string $orderBy): self
     {
         return new self(
-            $this->select,
-            $this->joins,
-            $this->where,
-            $orderBy,
-            $this->limit,
-            $this->primaryKey,
-            $this->page,
-            $this->perPage,
-            $this->filters
-        );
-    }
-
-    public function withLimit(string $limit): self
-    {
-        return new self(
-            $this->select,
-            $this->joins,
-            $this->where,
-            $this->orderBy,
-            $limit,
-            $this->primaryKey,
-            $this->page,
-            $this->perPage,
-            $this->filters
-        );
-    }
-
-    public function withPrimaryKey(string $primaryKey): self
-    {
-        return new self(
-            $this->select,
-            $this->joins,
-            $this->where,
-            $this->orderBy,
-            $this->limit,
-            $primaryKey,
-            $this->page,
-            $this->perPage,
-            $this->filters
+            select: $this->select,
+            joins: $this->joins,
+            where: $this->where,
+            orderBy: $orderBy,
+            limit: $this->limit,
+            primaryKey: $this->primaryKey,
+            page: $this->page,
+            perPage: $this->perPage,
+            filters: $this->filters,
+            filterJoins: $this->filterJoins,
+            filterSelect: $this->filterSelect
         );
     }
 
     public function withPage(int $page): self
     {
         $newPage = max(1, $page);
-        $limit = "LIMIT " . (((int)$this->page - 1) * $newPage) . ", $newPage";
+        $limit = "LIMIT " . (($newPage - 1) * $this->perPage) . ", $this->perPage";
 
         return new self(
-            $this->select,
-            $this->joins,
-            $this->where,
-            $this->orderBy,
-            $limit,
-            $this->primaryKey,
-            $newPage,
-            $this->perPage,
-            $this->filters
+            select: $this->select,
+            joins: $this->joins,
+            where: $this->where,
+            orderBy: $this->orderBy,
+            limit: $limit,
+            primaryKey: $this->primaryKey,
+            page: $newPage,
+            perPage: $this->perPage,
+            filters: $this->filters,
+            filterJoins: $this->filterJoins,
+            filterSelect: $this->filterSelect
         );
     }
 
     public function withPerPage(int $perPage): self
     {
         $newPerPage = max(1, $perPage);
-        $limit = "LIMIT " . (((int)$this->page - 1) * $newPerPage) . ", $newPerPage";
+        $limit = "LIMIT " . (($this->page - 1) * $newPerPage) . ", $newPerPage";
 
         return new self(
-            $this->select,
-            $this->joins,
-            $this->where,
-            $this->orderBy,
-            $limit,
-            $this->primaryKey,
-            $this->page,
-            $newPerPage,
-            $this->filters
+            select: $this->select,
+            joins: $this->joins,
+            where: $this->where,
+            orderBy: $this->orderBy,
+            limit: $limit,
+            primaryKey: $this->primaryKey,
+            page: $this->page,
+            perPage: $newPerPage,
+            filters: $this->filters,
+            filterJoins: $this->filterJoins,
+            filterSelect: $this->filterSelect
         );
     }
 
-    public function withFilters(array $filters): self
+    public function withPrimaryKey(string $primaryKey): self
     {
         return new self(
-            $this->select,
-            $this->joins,
-            $this->where,
-            $this->orderBy,
-            $this->limit,
-            $this->primaryKey,
-            $this->page,
-            $this->perPage,
-            $filters
+            select: $this->select,
+            joins: $this->joins,
+            where: $this->where,
+            orderBy: $this->orderBy,
+            limit: $this->limit,
+            primaryKey: $primaryKey,
+            page: $this->page,
+            perPage: $this->perPage,
+            filters: $this->filters,
+            filterJoins: $this->filterJoins,
+            filterSelect: $this->filterSelect
+        );
+    }
+
+    public function withFilterJoins(string $joins): self
+    {
+        return new self(
+            select: $this->select,
+            joins: $this->joins,
+            where: $this->where,
+            orderBy: $this->orderBy,
+            limit: $this->limit,
+            primaryKey: $this->primaryKey,
+            page: $this->page,
+            perPage: $this->perPage,
+            filters: $this->filters,
+            filterJoins: $joins,
+            filterSelect: $this->filterSelect
+        );
+    }
+
+    public function withFilterSelect(string $select): self
+    {
+        return new self(
+            select: $this->select,
+            joins: $this->joins,
+            where: $this->where,
+            orderBy: $this->orderBy,
+            limit: $this->limit,
+            primaryKey: $this->primaryKey,
+            page: $this->page,
+            perPage: $this->perPage,
+            filters: $this->filters,
+            filterJoins: $this->filterJoins,
+            filterSelect: $select
         );
     }
 
     public function clearLimit(): self
     {
         return new self(
-            $this->select,
-            $this->joins,
-            $this->where,
-            $this->orderBy,
-            '',
-            $this->primaryKey,
-            $this->page,
-            $this->perPage,
-            $this->filters
+            select: $this->select,
+            joins: $this->joins,
+            where: $this->where,
+            orderBy: $this->orderBy,
+            limit: '',
+            primaryKey: $this->primaryKey,
+            page: $this->page,
+            perPage: $this->perPage,
+            filters: $this->filters,
+            filterJoins: $this->filterJoins,
+            filterSelect: $this->filterSelect
         );
     }
-
 }

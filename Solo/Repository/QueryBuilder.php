@@ -3,21 +3,34 @@
 namespace Solo\Repository;
 
 use Solo\Database;
+use Closure;
 
 final class QueryBuilder
 {
     public function __construct(
         private readonly Database $db,
-        private readonly string $table,
-        private readonly string $alias
-    ) {}
+        private readonly string   $table,
+        private readonly string   $alias
+    )
+    {
+    }
 
     public function buildSelect(QueryParameters $params): string
     {
+        $baseSelect = $params->getSelect();
+        $filterSelect = $params->getFilterSelect();
+
+        $select = $baseSelect === '*'
+            ? "{$this->alias}.*, " . ($filterSelect ?: '')
+            : $baseSelect . ($filterSelect ? ", $filterSelect" : '');
+
+        $select = rtrim($select, ', ');
+
         return trim("
-            SELECT {$params->getSelect()}
+            SELECT $select
             FROM {$this->table} AS {$this->alias}
             {$params->getJoins()} 
+            {$params->getFilterJoins()}
             WHERE 1 {$params->getWhere()}
             {$params->getOrderBy()}
             {$params->getLimit()}
@@ -30,6 +43,7 @@ final class QueryBuilder
             SELECT COUNT(*) AS count
             FROM {$this->table} AS {$this->alias}
             {$params->getJoins()}
+            {$params->getFilterJoins()}
             WHERE 1 {$params->getWhere()}
         ");
     }
@@ -37,25 +51,44 @@ final class QueryBuilder
     public function prepareFilters(array $filters, array $filterDefinitions): array
     {
         $where = '';
-        $cleanFilters = array_filter($filters, fn($value) => $value !== null);
+        $joins = [];
+        $select = [];
 
-        foreach ($cleanFilters as $field => $value) {
+        foreach ($filters as $field => $value) {
+        if ($value === null) {
+            continue;
+        }
+
             if (!isset($filterDefinitions[$field])) {
                 continue;
-        }
+            }
 
-            $filter = $filterDefinitions[$field];
+            $config = $filterDefinitions[$field];
+            $condition = $config instanceof FilterConfig ? $config->where : $config;
 
-            if (is_callable($filter)) {
-                $where .= $filter($value);
-            } elseif (is_string($filter)) {
-                if (str_contains($filter, '?a')) {
+            if ($condition instanceof Closure) {
+                $where .= $condition($value);
+            } elseif (is_string($condition)) {
+                if (str_contains($condition, '?a')) {
                     $value = (array)$value;
                 }
-                $where .= $this->db->prepare(" $filter", $value);
+                $where .= $this->db->prepare(" $condition", $value);
+            }
+
+        if ($config instanceof FilterConfig) {
+            if ($config->joins) {
+                $joins[] = $config->joins;
+            }
+            if ($config->select) {
+                $select[] = $config->select;
             }
         }
+        }
 
-        return ['where' => $where];
+        return [
+            'where' => $where,
+            'joins' => implode(' ', array_unique($joins)),
+            'select' => implode(', ', array_unique($select))
+        ];
     }
 }

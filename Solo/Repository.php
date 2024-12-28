@@ -51,7 +51,7 @@ abstract class Repository implements RepositoryInterface
     protected function joins(): string { return ''; }
     protected function filters(): array { return []; }
 
-    public function filter(?array $filters): self
+    public function withFilter(?array $filters): self
     {
         if ($filters === null || empty($filters)) {
             return clone $this;
@@ -60,12 +60,15 @@ abstract class Repository implements RepositoryInterface
         $sqlParts = $this->queryBuilder->prepareFilters($filters, $this->filters());
 
         $clone = clone $this;
-        $clone->queryParams = $this->queryParams->withWhere($sqlParts['where']);
+        $clone->queryParams = $this->queryParams
+            ->withWhere($sqlParts['where'])
+            ->withFilterJoins($sqlParts['joins'])
+            ->withFilterSelect($sqlParts['select']);
 
         return $clone;
     }
 
-    public function orderBy(?string ...$order): self
+    public function withOrderBy(?string ...$order): self
     {
         if (empty($order) || in_array(null, $order, true)) {
             return clone $this;
@@ -81,7 +84,7 @@ abstract class Repository implements RepositoryInterface
         return $clone;
     }
 
-    public function page(int|string|null $page): self
+    public function withPage(int|string|null $page): self
     {
         if ($page === null) {
             return clone $this;
@@ -92,7 +95,7 @@ abstract class Repository implements RepositoryInterface
         return $clone;
     }
 
-    public function perPage(int|string|null $perPage): self
+    public function withPerPage(int|string|null $perPage): self
     {
         if ($perPage === null) {
             return clone $this;
@@ -103,7 +106,7 @@ abstract class Repository implements RepositoryInterface
         return $clone;
     }
 
-    public function primaryKey(string $primaryKey): self
+    public function withPrimaryKey(string $primaryKey): self
     {
         $clone = clone $this;
         $clone->queryParams = $this->queryParams->withPrimaryKey($primaryKey);
@@ -143,13 +146,11 @@ abstract class Repository implements RepositoryInterface
         return $this->db->rowCount();
     }
 
-    public function read(bool $readOne = false): mixed
+    public function read(): array
     {
         $query = $this->queryBuilder->buildSelect($this->queryParams);
         $this->db->query($query);
-        return $readOne
-            ? $this->db->fetchObject()
-            : $this->db->fetchAll($this->queryParams->getPrimaryKey());
+        return $this->db->fetchAll($this->queryParams->getPrimaryKey());
     }
 
     public function readOne(): ?object
@@ -158,7 +159,12 @@ abstract class Repository implements RepositoryInterface
         $clone->queryParams = $this->queryParams
             ->withPage(1)
             ->withPerPage(1);
-        return $clone->read(true);
+
+        $query = $clone->queryBuilder->buildSelect($clone->queryParams);
+        $clone->db->query($query);
+        $result = $clone->db->fetchObject();
+
+        return $result === false ? null : $result;
     }
 
     public function readAll(): array
