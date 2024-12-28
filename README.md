@@ -1,6 +1,9 @@
 # Base Repository Class
 
-A flexible base repository class for PHP 8+ with query builder and CRUD operations, featuring immutable query parameters.
+[![Latest Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/solophp/repository)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](https://opensource.org/licenses/MIT)
+
+A flexible base repository class for PHP 8+ with query builder and CRUD operations, featuring immutable architecture and selective loading.
 
 ## Installation
 
@@ -13,12 +16,14 @@ The package will automatically install required dependencies, including [solophp
 ## Features
 
 - Clean implementation of Repository pattern with immutability
-- Fluent QueryBuilder interface
-- Separation of concerns between Query Parameters and Builder
+- Fluent QueryBuilder interface with withX methods
+- Separation of concerns between QueryParameters, QueryBuilder and FilterConfig
 - Type-safe and IDE-friendly
 - Automatic field sanitization
 - Advanced filtering system:
     - Support for all database types (string, integer, float, array, date)
+    - Selective loading with per-filter JOIN and SELECT support
+    - Automatic JOIN deduplication
     - Table name prefixing
     - LIKE queries with automatic wildcards
     - Raw SQL parameters
@@ -43,19 +48,19 @@ Methods for building and manipulating database queries:
 interface QueryBuilderInterface 
 {
     // Apply filters to the query
-    public function filter(?array $filters): self;
+    public function withFilter(?array $filters): self;
 
     // Set the order of results
-    public function orderBy(?string ...$order): self;
+    public function withOrderBy(?string ...$order): self;
 
     // Set the page number for pagination
-    public function page(int|string|null $page): self;
+    public function withPage(int|string|null $page): self;
 
     // Set the number of items per page
-    public function perPage(int|string|null $perPage): self;
+    public function withPerPage(int|string|null $perPage): self;
 
     // Set primary key for result indexing
-    public function primaryKey(string $primaryKey): self;
+    public function withPrimaryKey(string $primaryKey): self;
 }
 ```
 
@@ -123,11 +128,44 @@ class ProductsRepository extends Repository
     protected function filters(): array
     {
         return [
-            'id' => 'AND p.id IN(?a)',
-            'enabled' => 'AND p.enabled = ?i',
-            'category_id' => 'AND c.id IN(?a)',
-            'keyword' => fn($value) => $this->db->prepare("AND p.name LIKE '%?s%'", $value)
+            'id' => new FilterConfig(
+                where: 'AND p.id IN(?a)'
+            ),
+            'enabled' => new FilterConfig(
+                where: 'AND p.enabled = ?i'
+            ),
+            'category_id' => new FilterConfig(
+                where: 'AND c.id IN(?a)',
+                select: 'c.path AS category_path',
+                joins: 'LEFT JOIN categories c ON c.id = p.category_id'
+            ),
+            'search' => new FilterConfig(
+                where: fn($value) => $this->buildSearchFilter($value),
+                select: '
+                    b.name AS brand_name,
+                    cn.name AS country_name
+                ',
+                joins: '
+                    LEFT JOIN brands b ON b.id = p.brand_id
+                    LEFT JOIN countries cn ON cn.id = p.country_id
+                '
+            )
         ];
+    }
+
+    private function buildSearchFilter(string $value): string 
+    {
+        $filter = '';
+        foreach (explode(' ', $value) as $kw) {
+            if ($kw = trim($kw)) {
+                $filter .= $this->db->prepare(
+                    "AND (p.name LIKE ?l OR b.name LIKE ?l)", 
+                    $kw, 
+                    $kw
+                );
+            }
+        }
+        return $filter;
     }
 }
 ```
@@ -156,7 +194,7 @@ $id = $repository->create([
 ```php
 // Read with filters
 $products = $repository
-    ->filter([
+    ->withFilter([
         'enabled' => 1,
         'category_id' => [1, 2, 3]
     ])
@@ -164,18 +202,18 @@ $products = $repository
 
 // Read with pagination (accepts both int and string)
 $products = $repository
-    ->page(2)        // or ->page('2')
-    ->perPage(20)    // or ->perPage('20')
+    ->withPage(2)        // or ->withPage('2')
+    ->withPerPage(20)    // or ->withPerPage('20')
     ->read();
 
 // Read with sorting
 $products = $repository
-    ->orderBy('name', 'created_at DESC')
+    ->withOrderBy('name', 'created_at DESC')
     ->read();
 
 // Read one record
 $product = $repository
-    ->filter(['id' => 1])
+    ->withFilter(['id' => 1])
     ->readOne();
 
 // Read all records
@@ -183,7 +221,7 @@ $products = $repository->readAll();
 
 // Count records
 $count = $repository
-    ->filter(['enabled' => 1])
+    ->withFilter(['enabled' => 1])
     ->count();
 ```
 
@@ -256,30 +294,61 @@ The repository supports various placeholder types from solophp/database:
 - `?d` - Date (DateTimeImmutable)
 - `?l` - LIKE parameter (adds '%' for LIKE queries)
 
-Example:
+## Filter Configuration
+
+The FilterConfig class allows you to define complex filters with selective loading:
+
+```php
+new FilterConfig(
+    where: 'AND field = ?i',    // WHERE condition
+    select: 'field AS alias',    // Additional SELECT fields
+    joins: 'LEFT JOIN table'     // Required JOINs
+);
+```
+
+Example configuration with different types of filters:
 ```php
 protected function filters(): array
 {
     return [
-        'id' => 'AND p.id IN(?a)',                    // Array of IDs
-        'enabled' => 'AND p.enabled = ?i',            // Integer value
-        'price' => 'AND p.price > ?f',                // Float value
-        'name' => 'AND p.name = ?s',                  // String value
-        'created_at' => 'AND p.created_at > ?d',      // Date value
-        'search' => 'AND p.name LIKE ?l',             // LIKE search
-        'status' => 'AND p.status IN(?a)',            // Array of strings
-        'table' => 'AND ?t.column = ?i',              // Table name with prefix
-        'raw' => 'AND ?p',                            // Raw SQL
-        'data' => 'AND p.data = ?A',                  // Associative array
-        // Custom complex filter
-        'keyword' => fn($value) => $this->db->prepare(
+        // Simple filter
+        'id' => new FilterConfig(
+            where: 'AND p.id IN(?a)'
+        ),
+        
+        // Filter with additional fields
+        'category_id' => new FilterConfig(
+            where: 'AND c.id IN(?a)',
+            select: 'c.name AS category_name, c.path AS category_path',
+            joins: 'LEFT JOIN categories c ON c.id = p.category_id'
+        ),
+        
+        // Complex filter with callback
+        'search' => new FilterConfig(
+            where: fn($value) => $this->db->prepare(
             "AND (p.name LIKE ?l OR p.sku LIKE ?l)", 
             $value, 
             $value
+            ),
+            select: 'b.name AS brand_name',
+            joins: 'LEFT JOIN brands b ON b.id = p.brand_id'
+        ),
+
+        // Date filter
+        'created_after' => new FilterConfig(
+            where: 'AND p.created_at > ?d'
+        ),
+        
+        // Raw SQL filter
+        'custom' => new FilterConfig(
+            where: 'AND ?p',
+            select: 'CONCAT(field1, field2) AS combined'
         )
     ];
 }
 ```
+
+Each filter can specify its own SELECT fields and JOIN conditions, which will be automatically merged and deduplicated in the final query.
 
 ## Requirements
 
