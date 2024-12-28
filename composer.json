@@ -1,7 +1,7 @@
 {
   "name": "solophp/repository",
   "type": "library",
-  "description": "A flexible base repository class for PHP 8+ with query builder and CRUD operations.",
+  "description": "A flexible base repository class for PHP 8+ with query builder and CRUD operations, featuring immutable architecture and selective loading.",
   "keywords": [
     "repository",
     "database",
