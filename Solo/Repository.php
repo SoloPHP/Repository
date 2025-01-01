@@ -13,13 +13,13 @@ abstract class Repository implements RepositoryInterface
 {
     protected string $table;
     protected string $alias;
+    protected ?array $orderBy = null;
     private bool $initialized = false;
     private QueryBuilder $queryBuilder;
     private QueryParameters $queryParams;
 
     public function __construct(
         protected readonly Database       $db,
-        protected readonly FieldSanitizer $fieldSanitizer,
         protected readonly RecordFactory  $recordFactory
     )
     {
@@ -40,10 +40,16 @@ abstract class Repository implements RepositoryInterface
             $this->alias
         );
 
+        $orderBy = $this->orderBy ? 'ORDER BY ' . implode(', ', array_map(
+            fn($s) => "{$this->alias}.$s",
+            $this->orderBy
+        )) : '';
+
         $this->queryParams = new QueryParameters(
             select: $this->select(),
             joins: $this->joins(),
-            filters: $this->filters()
+            filters: $this->filters(),
+            orderBy: $orderBy
         );
     }
 
@@ -84,25 +90,25 @@ abstract class Repository implements RepositoryInterface
         return $clone;
     }
 
-    public function withPage(int|string|null $page): self
+    public function withPage(?string $page): self
     {
         if ($page === null) {
             return clone $this;
         }
 
         $clone = clone $this;
-        $clone->queryParams = $this->queryParams->withPage((int)$page);
+        $clone->queryParams = $this->queryParams->withPage($page);
         return $clone;
     }
 
-    public function withPerPage(int|string|null $perPage): self
+    public function withPerPage(?string $perPage): self
     {
         if ($perPage === null) {
             return clone $this;
         }
 
         $clone = clone $this;
-        $clone->queryParams = $this->queryParams->withPerPage((int)$perPage);
+        $clone->queryParams = $this->queryParams->withPerPage($perPage);
         return $clone;
     }
 
@@ -113,20 +119,14 @@ abstract class Repository implements RepositoryInterface
         return $clone;
     }
 
-    public function create(array $data, bool $sanitizeFields = false): string|false
+    public function create(array $data): string|false
     {
-        if ($sanitizeFields) {
-            $data = $this->fieldSanitizer->sanitize($this->table, $data);
-        }
         $this->db->query("INSERT INTO ?t SET ?A", $this->table, $data);
         return $this->db->lastInsertId();
     }
 
-    public function update(int|array $id, array $data, bool $sanitizeFields = false): int
+    public function update(int|array $id, array $data): int
     {
-        if ($sanitizeFields) {
-            $data = $this->fieldSanitizer->sanitize($this->table, $data);
-        }
         $this->db->query(
             "UPDATE ?t SET ?A WHERE id IN(?a)",
             $this->table,
@@ -179,6 +179,11 @@ abstract class Repository implements RepositoryInterface
         $query = $this->queryBuilder->buildCount($this->queryParams);
         $this->db->query($query);
         return $this->db->fetchObject('count');
+    }
+
+    public function exists(array $filters = []): bool
+    {
+        return $this->withFilter($filters)->count() > 0;
     }
 
     public function createEmptyRecord(): object

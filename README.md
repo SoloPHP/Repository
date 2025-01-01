@@ -1,6 +1,6 @@
 # Base Repository Class
 
-[![Latest Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/solophp/repository)
+[![Latest Version](https://img.shields.io/badge/version-2.1.0-blue.svg)](https://github.com/solophp/repository)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](https://opensource.org/licenses/MIT)
 
 A flexible base repository class for PHP 8+ with query builder and CRUD operations, featuring immutable architecture and selective loading.
@@ -15,75 +15,38 @@ The package will automatically install required dependencies, including [solophp
 
 ## Features
 
-- Clean implementation of Repository pattern with immutability
-- Fluent QueryBuilder interface with withX methods
-- Separation of concerns between QueryParameters, QueryBuilder and FilterConfig
-- Type-safe and IDE-friendly
-- Automatic field sanitization
-- Advanced filtering system:
-    - Support for all database types (string, integer, float, array, date)
-    - Selective loading with per-filter JOIN and SELECT support
-    - Automatic JOIN deduplication
-    - Table name prefixing
-    - LIKE queries with automatic wildcards
-    - Raw SQL parameters
-    - Associative arrays for SET clauses
-    - Custom filter callbacks
-    - Chainable filter conditions
-- Built-in pagination
-- Sorting support
-- JOIN operations support
-- Transaction support
-- Automatic default values based on database schema
-- Zero configuration for basic usage
-- Easily extendable
+- Repository pattern with immutable architecture
+- Query building with filters, sorting and pagination
+- Flexible filtering system:
+    - Multiple data type support
+    - Selective loading (JOIN/SELECT)
+    - Table prefixing
+    - LIKE queries and raw SQL
+    - Custom callbacks
+- Support for transactions
+- IDE-friendly with type safety
+- Zero config for basic usage
 
 ## Interface Methods
-
-### QueryBuilderInterface
-
-Methods for building and manipulating database queries:
-
-```php
-interface QueryBuilderInterface 
-{
-    // Apply filters to the query
-    public function withFilter(?array $filters): self;
-
-    // Set the order of results
-    public function withOrderBy(?string ...$order): self;
-
-    // Set the page number for pagination
-    public function withPage(int|string|null $page): self;
-
-    // Set the number of items per page
-    public function withPerPage(int|string|null $perPage): self;
-
-    // Set primary key for result indexing
-    public function withPrimaryKey(string $primaryKey): self;
-}
-```
-
-### RepositoryInterface
 
 CRUD and query methods:
 
 ```php
-interface RepositoryInterface extends QueryBuilderInterface
+interface RepositoryInterface
 {
     // Create a new record
-    public function create(array $data, bool $sanitizeFields = false): string|false;
+    public function create(array $data): string|false;
 
     // Update existing record(s)
-    public function update(int|array $id, array $data, bool $sanitizeFields = false): int;
+    public function update(int|array $id, array $data): int;
 
     // Delete a record
     public function delete(int $id): int;
 
     // Read records based on current query state
-    public function read(bool $readOne = false): mixed;
+    public function read(): array;
 
-    // Read a single record
+    // Read a single record based on current query state
     public function readOne(): ?object;
 
     // Read all records
@@ -99,6 +62,13 @@ interface RepositoryInterface extends QueryBuilderInterface
     public function beginTransaction(): bool;
     public function commit(): bool;
     public function rollback(): bool;
+
+    // Query building methods
+    public function withFilter(?array $filters): self;
+    public function withOrderBy(?string ...$order): self;
+    public function withPage(int|string|null $page): self;
+    public function withPerPage(int|string|null $perPage): self;
+    public function withPrimaryKey(string $primaryKey): self;
 }
 ```
 
@@ -109,6 +79,7 @@ class ProductsRepository extends Repository
 {
     protected string $table = 'products';
     protected string $alias = 'p';
+    protected ?array $orderBy = ['created_at DESC', 'id DESC']; // Default sorting
 
     protected function select(): string
     {
@@ -180,13 +151,6 @@ $id = $repository->create([
     'name' => 'New Product',
     'enabled' => 1
 ]);
-
-// Create with field sanitization
-$id = $repository->create([
-    'name' => 'New Product',
-    'enabled' => 1,
-    'non_existent_field' => 'value' // will be removed
-], true);
 ```
 
 ### Reading Records
@@ -259,12 +223,6 @@ $affected = $repository->update(1, [
 $affected = $repository->update([1, 2, 3], [
     'enabled' => 0
 ]);
-
-// Update with field sanitization
-$affected = $repository->update(1, [
-    'name' => 'Updated Name',
-    'non_existent_field' => 'value' // will be removed
-], true);
 ```
 
 ### Deleting Records
