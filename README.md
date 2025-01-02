@@ -1,6 +1,6 @@
 # Base Repository Class
 
-[![Latest Version](https://img.shields.io/badge/version-2.1.0-blue.svg)](https://github.com/solophp/repository)
+[![Latest Version](https://img.shields.io/badge/version-2.2.0-blue.svg)](https://github.com/solophp/repository)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](https://opensource.org/licenses/MIT)
 
 A flexible base repository class for PHP 8+ with query builder and CRUD operations, featuring immutable architecture and selective loading.
@@ -38,10 +38,10 @@ interface RepositoryInterface
     public function create(array $data): string|false;
 
     // Update existing record(s)
-    public function update(int|array $id, array $data): int;
+    public function update(string|array $id, array $data): int;
 
     // Delete a record
-    public function delete(int $id): int;
+    public function delete(string $id): int;
 
     // Read records based on current query state
     public function read(): array;
@@ -66,9 +66,10 @@ interface RepositoryInterface
     // Query building methods
     public function withFilter(?array $filters): self;
     public function withOrderBy(?string ...$order): self;
-    public function withPage(int|string|null $page): self;
-    public function withPerPage(int|string|null $perPage): self;
+    public function withPage(?string $page): self;
+    public function withPerPage(?string $perPage): self;
     public function withPrimaryKey(string $primaryKey): self;
+    public function withDistinct(bool $distinct = true): self;
 }
 ```
 
@@ -79,6 +80,7 @@ class ProductsRepository extends Repository
 {
     protected string $table = 'products';
     protected string $alias = 'p';
+    protected bool $distinct = false; // Enable DISTINCT for all repository queries
     protected ?array $orderBy = ['created_at DESC', 'id DESC']; // Default sorting
 
     protected function select(): string
@@ -175,6 +177,11 @@ $products = $repository
     ->withOrderBy('name', 'created_at DESC')
     ->read();
 
+// Read with DISTINCT
+$products = $repository
+    ->withDistinct()
+    ->read();
+
 // Read one record
 $product = $repository
     ->withFilter(['id' => 1])
@@ -215,12 +222,12 @@ try {
 
 ```php
 // Update single record
-$affected = $repository->update(1, [
+$affected = $repository->update('1', [
     'name' => 'Updated Name'
 ]);
 
 // Update multiple records
-$affected = $repository->update([1, 2, 3], [
+$affected = $repository->update(['1', '2', '3'], [
     'enabled' => 0
 ]);
 ```
@@ -228,7 +235,7 @@ $affected = $repository->update([1, 2, 3], [
 ### Deleting Records
 
 ```php
-$affected = $repository->delete(1);
+$affected = $repository->delete('1');
 ```
 
 ### Creating Empty Record
