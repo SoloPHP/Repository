@@ -15,7 +15,8 @@ final class QueryParameters
         private readonly int    $perPage = 25,
         private readonly array  $filters = [],
         private readonly string $filterJoins = '',
-        private readonly string $filterSelect = ''
+        private readonly string $filterSelect = '',
+        private readonly bool   $distinct = false
     )
     {
     }
@@ -28,6 +29,7 @@ final class QueryParameters
     public function getPrimaryKey(): string { return $this->primaryKey; }
     public function getFilterJoins(): string { return $this->filterJoins; }
     public function getFilterSelect(): string { return $this->filterSelect; }
+    public function isDistinct(): bool { return $this->distinct; }
 
     public function withSelect(string $select): self
     {
@@ -42,7 +44,26 @@ final class QueryParameters
             perPage: $this->perPage,
             filters: $this->filters,
             filterJoins: $this->filterJoins,
-            filterSelect: $this->filterSelect
+            filterSelect: $this->filterSelect,
+            distinct: $this->distinct
+        );
+    }
+
+    public function withDistinct(bool $distinct = true): self
+    {
+        return new self(
+            select: $this->select,
+            joins: $this->joins,
+            where: $this->where,
+            orderBy: $this->orderBy,
+            limit: $this->limit,
+            primaryKey: $this->primaryKey,
+            page: $this->page,
+            perPage: $this->perPage,
+            filters: $this->filters,
+            filterJoins: $this->filterJoins,
+            filterSelect: $this->filterSelect,
+            distinct: $distinct
         );
     }
 
@@ -59,7 +80,8 @@ final class QueryParameters
             perPage: $this->perPage,
             filters: $this->filters,
             filterJoins: $this->filterJoins,
-            filterSelect: $this->filterSelect
+            filterSelect: $this->filterSelect,
+            distinct: $this->distinct
         );
     }
 
@@ -76,7 +98,8 @@ final class QueryParameters
             perPage: $this->perPage,
             filters: $this->filters,
             filterJoins: $this->filterJoins,
-            filterSelect: $this->filterSelect
+            filterSelect: $this->filterSelect,
+            distinct: $this->distinct
         );
     }
 
@@ -93,7 +116,8 @@ final class QueryParameters
             perPage: $this->perPage,
             filters: $this->filters,
             filterJoins: $this->filterJoins,
-            filterSelect: $this->filterSelect
+            filterSelect: $this->filterSelect,
+            distinct: $this->distinct
         );
     }
 
@@ -113,7 +137,8 @@ final class QueryParameters
             perPage: $this->perPage,
             filters: $this->filters,
             filterJoins: $this->filterJoins,
-            filterSelect: $this->filterSelect
+            filterSelect: $this->filterSelect,
+            distinct: $this->distinct
         );
     }
 
@@ -133,7 +158,8 @@ final class QueryParameters
             perPage: $newPerPage,
             filters: $this->filters,
             filterJoins: $this->filterJoins,
-            filterSelect: $this->filterSelect
+            filterSelect: $this->filterSelect,
+            distinct: $this->distinct
         );
     }
 
@@ -150,7 +176,8 @@ final class QueryParameters
             perPage: $this->perPage,
             filters: $this->filters,
             filterJoins: $this->filterJoins,
-            filterSelect: $this->filterSelect
+            filterSelect: $this->filterSelect,
+            distinct: $this->distinct
         );
     }
 
@@ -167,7 +194,8 @@ final class QueryParameters
             perPage: $this->perPage,
             filters: $this->filters,
             filterJoins: $joins,
-            filterSelect: $this->filterSelect
+            filterSelect: $this->filterSelect,
+            distinct: $this->distinct
         );
     }
 
@@ -184,7 +212,8 @@ final class QueryParameters
             perPage: $this->perPage,
             filters: $this->filters,
             filterJoins: $this->filterJoins,
-            filterSelect: $select
+            filterSelect: $select,
+            distinct: $this->distinct
         );
     }
 
@@ -201,7 +230,8 @@ final class QueryParameters
             perPage: $this->perPage,
             filters: $this->filters,
             filterJoins: $this->filterJoins,
-            filterSelect: $this->filterSelect
+            filterSelect: $this->filterSelect,
+            distinct: $this->distinct
         );
     }
 }

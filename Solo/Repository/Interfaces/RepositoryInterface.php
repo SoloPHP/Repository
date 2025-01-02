@@ -10,6 +10,14 @@ namespace Solo\Repository\Interfaces;
 interface RepositoryInterface
 {
     /**
+     * Whether DISTINCT should be applied to SELECT queries
+     *
+     * @param bool $distinct Whether to enable DISTINCT (true by default)
+     * @return self New instance with DISTINCT flag set
+     */
+    public function withDistinct(bool $distinct = true): self;
+
+    /**
      * Apply filters to the query
      *
      * @param array|null $filters Associative array of filters where key is filter name and value is filter value
@@ -60,19 +68,19 @@ interface RepositoryInterface
     /**
      * Update existing record(s)
      *
-     * @param int|array $id Single ID or array of IDs to update
+     * @param string|array $id Single ID or array of IDs to update
      * @param array $data Updated data
      * @return int Number of affected rows
      */
-    public function update(int|array $id, array $data): int;
+    public function update(string|array $id, array $data): int;
 
     /**
      * Delete a record
      *
-     * @param int $id Record ID
+     * @param string $id Record ID
      * @return int Number of affected rows
      */
-    public function delete(int $id): int;
+    public function delete(string $id): int;
 
     /**
      * Read records based on current query state

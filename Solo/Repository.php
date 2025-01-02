@@ -4,7 +4,6 @@ namespace Solo;
 
 use Solo\Database;
 use Solo\Repository\Interfaces\RepositoryInterface;
-use Solo\Repository\FieldSanitizer;
 use Solo\Repository\RecordFactory;
 use Solo\Repository\QueryBuilder;
 use Solo\Repository\QueryParameters;
@@ -13,14 +12,15 @@ abstract class Repository implements RepositoryInterface
 {
     protected string $table;
     protected string $alias;
+    protected bool $distinct = false;
     protected ?array $orderBy = null;
     private bool $initialized = false;
     private QueryBuilder $queryBuilder;
     private QueryParameters $queryParams;
 
     public function __construct(
-        protected readonly Database       $db,
-        protected readonly RecordFactory  $recordFactory
+        protected readonly Database      $db,
+        protected readonly RecordFactory $recordFactory
     )
     {
         if (!isset($this->table)) {
@@ -47,6 +47,7 @@ abstract class Repository implements RepositoryInterface
 
         $this->queryParams = new QueryParameters(
             select: $this->select(),
+            distinct: $this->distinct,
             joins: $this->joins(),
             filters: $this->filters(),
             orderBy: $orderBy
@@ -56,6 +57,13 @@ abstract class Repository implements RepositoryInterface
     protected function select(): string { return '*'; }
     protected function joins(): string { return ''; }
     protected function filters(): array { return []; }
+
+    public function withDistinct(bool $distinct = true): self
+    {
+        $clone = clone $this;
+        $clone->queryParams = $this->queryParams->withDistinct($distinct);
+        return $clone;
+    }
 
     public function withFilter(?array $filters): self
     {
@@ -125,7 +133,7 @@ abstract class Repository implements RepositoryInterface
         return $this->db->lastInsertId();
     }
 
-    public function update(int|array $id, array $data): int
+    public function update(string|array $id, array $data): int
     {
         $this->db->query(
             "UPDATE ?t SET ?A WHERE id IN(?a)",
@@ -136,10 +144,10 @@ abstract class Repository implements RepositoryInterface
         return $this->db->rowCount();
     }
 
-    public function delete(int $id): int
+    public function delete(string $id): int
     {
         $this->db->query(
-            "DELETE FROM ?t WHERE id = ?i LIMIT 1",
+            "DELETE FROM ?t WHERE id = ?s LIMIT 1",
             $this->table,
             $id
         );

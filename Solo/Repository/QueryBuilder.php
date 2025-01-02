@@ -25,9 +25,10 @@ final class QueryBuilder
             : $baseSelect . ($filterSelect ? ", $filterSelect" : '');
 
         $select = rtrim($select, ', ');
+        $distinct = $params->isDistinct() ? 'DISTINCT ' : '';
 
         return trim("
-            SELECT $select
+            SELECT {$distinct}{$select}
             FROM {$this->table} AS {$this->alias}
             {$params->getJoins()} 
             {$params->getFilterJoins()}
