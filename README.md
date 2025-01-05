@@ -1,6 +1,6 @@
 # Base Repository Class
 
-[![Latest Version](https://img.shields.io/badge/version-2.2.0-blue.svg)](https://github.com/solophp/repository)
+[![Latest Version](https://img.shields.io/badge/version-2.3.0-blue.svg)](https://github.com/solophp/repository)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](https://opensource.org/licenses/MIT)
 
 A flexible base repository class for PHP 8+ with query builder and CRUD operations, featuring immutable architecture and selective loading.
@@ -66,8 +66,8 @@ interface RepositoryInterface
     // Query building methods
     public function withFilter(?array $filters): self;
     public function withOrderBy(?string ...$order): self;
-    public function withPage(?string $page): self;
-    public function withPerPage(?string $perPage): self;
+    public function withPage(?string $page, string $default = '1'): self;
+    public function withPerPage(?string $perPage, string $default = '25'): self;
     public function withPrimaryKey(string $primaryKey): self;
     public function withDistinct(bool $distinct = true): self;
 }
@@ -168,8 +168,14 @@ $products = $repository
 
 // Read with pagination (accepts both int and string)
 $products = $repository
-    ->withPage(2)        // or ->withPage('2')
-    ->withPerPage(20)    // or ->withPerPage('20')
+    ->withPage('2')             // or ->withPage(null) for default page 1
+    ->withPerPage('20')         // or ->withPerPage(null) for default 25 items
+    ->read();
+
+// Read with custom defaults
+$products = $repository
+    ->withPage(null, '5')       // use page 5 as default
+    ->withPerPage(null, '50')   // use 50 items as default
     ->read();
 
 // Read with sorting

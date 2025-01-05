@@ -98,25 +98,25 @@ abstract class Repository implements RepositoryInterface
         return $clone;
     }
 
-    public function withPage(?string $page): self
+    public function withPage(?string $page, string $default = '1'): self
     {
         if ($page === null) {
-            return clone $this;
+            $page = $default;
         }
 
         $clone = clone $this;
-        $clone->queryParams = $this->queryParams->withPage($page);
+        $clone->queryParams = $this->queryParams->withPage((int)$page);
         return $clone;
     }
 
-    public function withPerPage(?string $perPage): self
+    public function withPerPage(?string $perPage, string $default = '25'): self
     {
         if ($perPage === null) {
-            return clone $this;
+            $perPage = $default;
         }
 
         $clone = clone $this;
-        $clone->queryParams = $this->queryParams->withPerPage($perPage);
+        $clone->queryParams = $this->queryParams->withPerPage((int)$perPage);
         return $clone;
     }
 

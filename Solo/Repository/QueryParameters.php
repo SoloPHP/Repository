@@ -121,9 +121,9 @@ final class QueryParameters
         );
     }
 
-    public function withPage(?string $page): self
+    public function withPage(int $page): self
     {
-        $newPage = $page === null ? 1 : max(1, (int)$page);
+        $newPage = max(1, $page);
         $limit = "LIMIT " . (($newPage - 1) * $this->perPage) . ", $this->perPage";
 
         return new self(
@@ -142,9 +142,9 @@ final class QueryParameters
         );
     }
 
-    public function withPerPage(?string $perPage): self
+    public function withPerPage(int $perPage): self
     {
-        $newPerPage = $perPage === null ? 25 : max(1, (int)$perPage);
+        $newPerPage = max(1, $perPage);
         $limit = "LIMIT " . (($this->page - 1) * $newPerPage) . ", $newPerPage";
 
         return new self(
