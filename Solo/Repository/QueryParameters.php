@@ -12,7 +12,7 @@ final class QueryParameters
         private readonly string $limit = '',
         private readonly string $primaryKey = '',
         private readonly int    $page = 1,
-        private readonly int    $perPage = 25,
+        private readonly int    $itemLimit = 25,
         private readonly array  $filters = [],
         private readonly string $filterJoins = '',
         private readonly string $filterSelect = '',
@@ -41,7 +41,7 @@ final class QueryParameters
             limit: $this->limit,
             primaryKey: $this->primaryKey,
             page: $this->page,
-            perPage: $this->perPage,
+            itemLimit: $this->itemLimit,
             filters: $this->filters,
             filterJoins: $this->filterJoins,
             filterSelect: $this->filterSelect,
@@ -59,7 +59,7 @@ final class QueryParameters
             limit: $this->limit,
             primaryKey: $this->primaryKey,
             page: $this->page,
-            perPage: $this->perPage,
+            itemLimit: $this->itemLimit,
             filters: $this->filters,
             filterJoins: $this->filterJoins,
             filterSelect: $this->filterSelect,
@@ -77,7 +77,7 @@ final class QueryParameters
             limit: $this->limit,
             primaryKey: $this->primaryKey,
             page: $this->page,
-            perPage: $this->perPage,
+            itemLimit: $this->itemLimit,
             filters: $this->filters,
             filterJoins: $this->filterJoins,
             filterSelect: $this->filterSelect,
@@ -95,7 +95,7 @@ final class QueryParameters
             limit: $this->limit,
             primaryKey: $this->primaryKey,
             page: $this->page,
-            perPage: $this->perPage,
+            itemLimit: $this->itemLimit,
             filters: $this->filters,
             filterJoins: $this->filterJoins,
             filterSelect: $this->filterSelect,
@@ -113,7 +113,7 @@ final class QueryParameters
             limit: $this->limit,
             primaryKey: $this->primaryKey,
             page: $this->page,
-            perPage: $this->perPage,
+            itemLimit: $this->itemLimit,
             filters: $this->filters,
             filterJoins: $this->filterJoins,
             filterSelect: $this->filterSelect,
@@ -124,7 +124,7 @@ final class QueryParameters
     public function withPage(int $page): self
     {
         $newPage = max(1, $page);
-        $limit = "LIMIT " . (($newPage - 1) * $this->perPage) . ", $this->perPage";
+        $limit = "LIMIT " . (($newPage - 1) * $this->itemLimit) . ", $this->itemLimit";
 
         return new self(
             select: $this->select,
@@ -134,7 +134,7 @@ final class QueryParameters
             limit: $limit,
             primaryKey: $this->primaryKey,
             page: $newPage,
-            perPage: $this->perPage,
+            itemLimit: $this->itemLimit,
             filters: $this->filters,
             filterJoins: $this->filterJoins,
             filterSelect: $this->filterSelect,
@@ -142,20 +142,20 @@ final class QueryParameters
         );
     }
 
-    public function withPerPage(int $perPage): self
+    public function withLimit(int $limit): self
     {
-        $newPerPage = max(1, $perPage);
-        $limit = "LIMIT " . (($this->page - 1) * $newPerPage) . ", $newPerPage";
+        $newLimit = max(1, $limit);
+        $limitClause = "LIMIT " . (($this->page - 1) * $newLimit) . ", $newLimit";
 
         return new self(
             select: $this->select,
             joins: $this->joins,
             where: $this->where,
             orderBy: $this->orderBy,
-            limit: $limit,
+            limit: $limitClause,
             primaryKey: $this->primaryKey,
             page: $this->page,
-            perPage: $newPerPage,
+            itemLimit: $newLimit,
             filters: $this->filters,
             filterJoins: $this->filterJoins,
             filterSelect: $this->filterSelect,
@@ -173,7 +173,7 @@ final class QueryParameters
             limit: $this->limit,
             primaryKey: $primaryKey,
             page: $this->page,
-            perPage: $this->perPage,
+            itemLimit: $this->itemLimit,
             filters: $this->filters,
             filterJoins: $this->filterJoins,
             filterSelect: $this->filterSelect,
@@ -191,7 +191,7 @@ final class QueryParameters
             limit: $this->limit,
             primaryKey: $this->primaryKey,
             page: $this->page,
-            perPage: $this->perPage,
+            itemLimit: $this->itemLimit,
             filters: $this->filters,
             filterJoins: $joins,
             filterSelect: $this->filterSelect,
@@ -209,7 +209,7 @@ final class QueryParameters
             limit: $this->limit,
             primaryKey: $this->primaryKey,
             page: $this->page,
-            perPage: $this->perPage,
+            itemLimit: $this->itemLimit,
             filters: $this->filters,
             filterJoins: $this->filterJoins,
             filterSelect: $select,
@@ -227,7 +227,7 @@ final class QueryParameters
             limit: '',
             primaryKey: $this->primaryKey,
             page: $this->page,
-            perPage: $this->perPage,
+            itemLimit: $this->itemLimit,
             filters: $this->filters,
             filterJoins: $this->filterJoins,
             filterSelect: $this->filterSelect,

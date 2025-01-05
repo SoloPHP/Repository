@@ -44,10 +44,10 @@ interface RepositoryInterface
     /**
      * Set the number of items per page
      *
-     * @param string|null $perPage Number of items per page
+     * @param string|null $limit Number of items per page
      * @return self New instance with applied limit
      */
-    public function withPerPage(?string $perPage, string $default = '25'): self;
+    public function withLimit(?string $limit, string $default = '25'): self;
 
     /**
      * Set the primary key field for result indexing

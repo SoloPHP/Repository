@@ -109,14 +109,14 @@ abstract class Repository implements RepositoryInterface
         return $clone;
     }
 
-    public function withPerPage(?string $perPage, string $default = '25'): self
+    public function withLimit(?string $limit, string $default = '25'): self
     {
-        if ($perPage === null) {
-            $perPage = $default;
+        if ($limit === null) {
+            $limit = $default;
         }
 
         $clone = clone $this;
-        $clone->queryParams = $this->queryParams->withPerPage((int)$perPage);
+        $clone->queryParams = $this->queryParams->withLimit((int)$limit);
         return $clone;
     }
 
@@ -166,7 +166,7 @@ abstract class Repository implements RepositoryInterface
         $clone = clone $this;
         $clone->queryParams = $this->queryParams
             ->withPage(1)
-            ->withPerPage(1);
+            ->withLimit(1);
 
         $query = $clone->queryBuilder->buildSelect($clone->queryParams);
         $clone->db->query($query);
