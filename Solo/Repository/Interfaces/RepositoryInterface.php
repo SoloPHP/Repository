@@ -36,18 +36,18 @@ interface RepositoryInterface
     /**
      * Set the page number for pagination
      *
-     * @param string|null $page Page number (1-based)
+     * @param int|null $page Page number (1-based)
      * @return self New instance with applied pagination
      */
-    public function withPage(?string $page, string $default = '1'): self;
+    public function withPage(?int $page, int $default = 1): self;
 
     /**
      * Set the number of items per page
      *
-     * @param string|null $limit Number of items per page
+     * @param int|null $limit Number of items per page
      * @return self New instance with applied limit
      */
-    public function withLimit(?string $limit, string $default = '25'): self;
+    public function withLimit(?int $limit, int $default = 25): self;
 
     /**
      * Set the primary key field for result indexing
