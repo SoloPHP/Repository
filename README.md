@@ -66,7 +66,7 @@ interface RepositoryInterface
     // Query building methods
     public function withFilter(?array $filters): self;
     public function withOrderBy(?string ...$order): self;
-    public function withSorting(?string $sort, string $order = 'ASC'): self;
+    public function withSorting(?string $order, string $direction = 'ASC'): self;
     public function withPage(?int $page, int $default = 1): self;
     public function withLimit(?int $limit, int $default = 25): self;
     public function withPrimaryKey(string $primaryKey): self;

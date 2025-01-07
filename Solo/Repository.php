@@ -47,10 +47,10 @@ abstract class Repository implements RepositoryInterface
 
         $this->queryParams = new QueryParameters(
             select: $this->select(),
-            distinct: $this->distinct,
             joins: $this->joins(),
+            orderBy: $orderBy,
             filters: $this->filters(),
-            orderBy: $orderBy
+            distinct: $this->distinct,
         );
     }
 
@@ -98,18 +98,18 @@ abstract class Repository implements RepositoryInterface
         return $clone;
     }
 
-    public function withSorting(?string $sort, ?string $order = 'ASC'): self
+    public function withSorting(?string $order, string $direction = 'ASC'): self
     {
-        if ($sort === null) {
+        if ($order === null) {
             return $this;
         }
 
-        $direction = strtoupper($order ?? 'ASC');
+        $direction = strtoupper($direction);
         if (!in_array($direction, ['ASC', 'DESC'], true)) {
             $direction = 'ASC';
         }
 
-        return $this->withOrderBy("$sort $direction");
+        return $this->withOrderBy("$order $direction");
     }
 
     public function withPage(?int $page, int $default = 1): self
