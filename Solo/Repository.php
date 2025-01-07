@@ -98,6 +98,20 @@ abstract class Repository implements RepositoryInterface
         return $clone;
     }
 
+    public function withSorting(?string $sort, ?string $order = 'ASC'): self
+    {
+        if ($sort === null) {
+            return $this;
+        }
+
+        $direction = strtoupper($order ?? 'ASC');
+        if (!in_array($direction, ['ASC', 'DESC'], true)) {
+            $direction = 'ASC';
+        }
+
+        return $this->withOrderBy("$sort $direction");
+    }
+
     public function withPage(?int $page, int $default = 1): self
     {
         if ($page === null) {

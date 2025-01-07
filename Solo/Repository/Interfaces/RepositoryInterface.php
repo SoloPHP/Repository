@@ -34,6 +34,15 @@ interface RepositoryInterface
     public function withOrderBy(?string ...$order): self;
 
     /**
+     * Set sorting by field and direction
+     *
+     * @param string|null $sort Field name for sorting
+     * @param string $order Sort direction ('ASC' or 'DESC')
+     * @return self New instance with applied sorting
+     */
+    public function withSorting(?string $sort, string $order = 'ASC'): self;
+
+    /**
      * Set the page number for pagination
      *
      * @param int|null $page Page number (1-based)

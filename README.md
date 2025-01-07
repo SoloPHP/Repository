@@ -66,6 +66,7 @@ interface RepositoryInterface
     // Query building methods
     public function withFilter(?array $filters): self;
     public function withOrderBy(?string ...$order): self;
+    public function withSorting(?string $sort, string $order = 'ASC'): self;
     public function withPage(?int $page, int $default = 1): self;
     public function withLimit(?int $limit, int $default = 25): self;
     public function withPrimaryKey(string $primaryKey): self;
@@ -178,9 +179,15 @@ $products = $repository
     ->withLimit(null, 50)    // use 50 items as default
     ->read();
 
-// Read with sorting
+// Read with sorting (two methods available)
+// Method 1 - using withOrderBy:
 $products = $repository
     ->withOrderBy('name', 'created_at DESC')
+    ->read();
+
+// Method 2 - using withSorting:
+$products = $repository
+    ->withSorting('name', 'DESC')
     ->read();
 
 // Read with DISTINCT
