@@ -104,7 +104,7 @@ abstract class Repository implements RepositoryInterface
             return $this;
         }
 
-        $direction = strtoupper($direction);
+        $direction = strtoupper($direction ?? 'ASC');
         if (!in_array($direction, ['ASC', 'DESC'], true)) {
             $direction = 'ASC';
         }
