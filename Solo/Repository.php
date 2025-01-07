@@ -98,7 +98,7 @@ abstract class Repository implements RepositoryInterface
         return $clone;
     }
 
-    public function withSorting(?string $order, string $direction = 'ASC'): self
+    public function withSorting(?string $order, ?string $direction = 'ASC'): self
     {
         if ($order === null) {
             return $this;
