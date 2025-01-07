@@ -35,13 +35,13 @@ CRUD and query methods:
 interface RepositoryInterface
 {
     // Create a new record
-    public function create(array $data): string|false;
+    public function create(array $data): int|false;
 
     // Update existing record(s)
-    public function update(string|array $id, array $data): int;
+    public function update(int|array $id, array $data): int;
 
     // Delete a record
-    public function delete(string $id): int;
+    public function delete(int $id): int;
 
     // Read records based on current query state
     public function read(): array;
@@ -153,7 +153,7 @@ class ProductsRepository extends Repository
 $id = $repository->create([
     'name' => 'New Product',
     'enabled' => 1
-]);
+]); // Returns int ID or false
 ```
 
 ### Reading Records
@@ -235,12 +235,12 @@ try {
 
 ```php
 // Update single record
-$affected = $repository->update('1', [
+$affected = $repository->update(1, [
     'name' => 'Updated Name'
 ]);
 
 // Update multiple records
-$affected = $repository->update(['1', '2', '3'], [
+$affected = $repository->update([1, 2, 3], [
     'enabled' => 0
 ]);
 ```
@@ -248,7 +248,7 @@ $affected = $repository->update(['1', '2', '3'], [
 ### Deleting Records
 
 ```php
-$affected = $repository->delete('1');
+$affected = $repository->delete(1);
 ```
 
 ### Creating Empty Record

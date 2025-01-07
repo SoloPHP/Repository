@@ -70,26 +70,26 @@ interface RepositoryInterface
      * Create a new record
      *
      * @param array $data Record data
-     * @return string|false The ID of created record or false on failure
+     * @return int|false The ID of created record or false on failure
      */
-    public function create(array $data): string|false;
+    public function create(array $data): int|false;
 
     /**
      * Update existing record(s)
      *
-     * @param string|array $id Single ID or array of IDs to update
+     * @param int|array $id Single ID or array of IDs to update
      * @param array $data Updated data
      * @return int Number of affected rows
      */
-    public function update(string|array $id, array $data): int;
+    public function update(int|array $id, array $data): int;
 
     /**
      * Delete a record
      *
-     * @param string $id Record ID
+     * @param int $id Record ID
      * @return int Number of affected rows
      */
-    public function delete(string $id): int;
+    public function delete(int $id): int;
 
     /**
      * Read records based on current query state

@@ -141,13 +141,14 @@ abstract class Repository implements RepositoryInterface
         return $clone;
     }
 
-    public function create(array $data): string|false
+    public function create(array $data): int|false
     {
         $this->db->query("INSERT INTO ?t SET ?A", $this->table, $data);
-        return $this->db->lastInsertId();
+        $id = $this->db->lastInsertId();
+        return $id ? (int)$id : false;
     }
 
-    public function update(string|array $id, array $data): int
+    public function update(int|array $id, array $data): int
     {
         $this->db->query(
             "UPDATE ?t SET ?A WHERE id IN(?a)",
@@ -158,10 +159,10 @@ abstract class Repository implements RepositoryInterface
         return $this->db->rowCount();
     }
 
-    public function delete(string $id): int
+    public function delete(int $id): int
     {
         $this->db->query(
-            "DELETE FROM ?t WHERE id = ?s LIMIT 1",
+            "DELETE FROM ?t WHERE id = ?i LIMIT 1",
             $this->table,
             $id
         );
