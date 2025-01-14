@@ -67,7 +67,9 @@ final class QueryBuilder
             $config = $filterDefinitions[$field];
             $condition = $config instanceof FilterConfig ? $config->where : $config;
 
-            if ($condition instanceof Closure) {
+            if ($config instanceof FilterConfig && $config->search) {
+                $where .= $this->buildSearchFilter($value, $config->search);
+            } elseif ($condition instanceof Closure) {
                 $where .= $condition($value);
             } elseif (is_string($condition)) {
                 if (str_contains($condition, '?a')) {
@@ -91,5 +93,25 @@ final class QueryBuilder
             'joins' => implode(' ', array_unique($joins)),
             'select' => implode(', ', array_unique($select))
         ];
+    }
+
+    public function buildSearchFilter(string $value, array $search): string
+    {
+        $field = $search[0];
+
+        if (str_contains($value, ':')) {
+            [$f, $value] = explode(':', $value, 2);
+            if (in_array($f, $search, true)) {
+                $field = $f;
+            }
+        }
+
+        $filter = '';
+        foreach (explode(' ', $value) as $kw) {
+            if ($kw = trim($kw)) {
+                $filter .= $this->db->prepare("AND {$this->alias}.$field LIKE ?l", $kw);
+            }
+        }
+        return $filter;
     }
 }

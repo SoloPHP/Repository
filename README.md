@@ -1,6 +1,6 @@
 # Base Repository Class
 
-[![Latest Version](https://img.shields.io/badge/version-2.3.0-blue.svg)](https://github.com/solophp/repository)
+[![Latest Version](https://img.shields.io/badge/version-2.4.0-blue.svg)](https://github.com/solophp/repository)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](https://opensource.org/licenses/MIT)
 
 A flexible base repository class for PHP 8+ with query builder and CRUD operations, featuring immutable architecture and selective loading.
@@ -23,6 +23,7 @@ The package will automatically install required dependencies, including [solophp
     - Table prefixing
     - LIKE queries and raw SQL
     - Custom callbacks
+    - Advanced search functionality with field selection
 - Support for transactions
 - IDE-friendly with type safety
 - Zero config for basic usage
@@ -74,6 +75,19 @@ interface RepositoryInterface
 }
 ```
 
+## Filter Configuration
+
+The FilterConfig class allows you to define complex filters with selective loading:
+
+```php
+new FilterConfig(
+    where: 'AND field = ?i',      // WHERE condition or Closure
+    select: 'field AS alias',      // Additional SELECT fields
+    joins: 'LEFT JOIN table',      // Required JOINs
+    search: ['field1', 'field2']   // Searchable fields
+);
+```
+
 ## Implementation Example
 
 ```php
@@ -81,14 +95,15 @@ class ProductsRepository extends Repository
 {
     protected string $table = 'products';
     protected string $alias = 'p';
-    protected bool $distinct = false; // Enable DISTINCT for all repository queries
-    protected ?array $orderBy = ['created_at DESC', 'id DESC']; // Default sorting
+    protected bool $distinct = false;
+    protected ?array $orderBy = ['created_at DESC', 'id DESC'];
 
     protected function select(): string
     {
         return '
             p.*,
-            c.name AS category_name
+            c.name AS category_name,
+            b.name AS brand_name
         ';
     }
 
@@ -96,49 +111,52 @@ class ProductsRepository extends Repository
     {
         return '
             LEFT JOIN categories c ON c.id = p.category_id
+            LEFT JOIN brands b ON b.id = p.brand_id
         ';
     }
 
     protected function filters(): array
     {
         return [
+            // Simple filter
             'id' => new FilterConfig(
                 where: 'AND p.id IN(?a)'
             ),
+            
+            // Filter with negation
+            '!id' => new FilterConfig(
+                where: 'AND p.id NOT IN(?a)'
+            ),
+            
+            // Boolean filter
             'enabled' => new FilterConfig(
                 where: 'AND p.enabled = ?i'
             ),
+            
+            // Filter with additional data
             'category_id' => new FilterConfig(
                 where: 'AND c.id IN(?a)',
                 select: 'c.path AS category_path',
                 joins: 'LEFT JOIN categories c ON c.id = p.category_id'
             ),
+            
+            // Search functionality with multiple fields
             'search' => new FilterConfig(
-                where: fn($value) => $this->buildSearchFilter($value),
-                select: '
-                    b.name AS brand_name,
-                    cn.name AS country_name
-                ',
-                joins: '
-                    LEFT JOIN brands b ON b.id = p.brand_id
-                    LEFT JOIN countries cn ON cn.id = p.country_id
-                '
+                search: ['name', 'id', 'sku']
+            ),
+            
+            // Complex filter with callback
+            'custom_search' => new FilterConfig(
+                where: fn($value) => $this->buildCustomSearch($value),
+                select: 'b.name AS brand_name',
+                joins: 'LEFT JOIN brands b ON b.id = p.brand_id'
             )
         ];
     }
 
-    private function buildSearchFilter(string $value): string 
+    private function buildCustomSearch(string $value): string 
     {
-        $filter = '';
-        foreach (explode(' ', $value) as $kw) {
-            if ($kw = trim($kw)) {
-                $filter .= $this->db->prepare(
-                    "AND (p.name LIKE ?l OR b.name LIKE ?l)", 
-                    $kw, 
-                    $kw
-                );
-            }
-        }
+        //some logic
         return $filter;
     }
 }
@@ -167,6 +185,25 @@ $products = $repository
     ])
     ->read();
 
+// Using search functionality
+$products = $repository
+    ->withFilter([
+        'search' => 'keyword'           // Search in default field (first in array)
+    ])
+    ->read();
+
+$products = $repository
+    ->withFilter([
+        'search' => 'id:12345'          // Search in specific field
+    ])
+    ->read();
+
+$products = $repository
+    ->withFilter([
+        'search' => 'red shirt'         // Multi-word search
+    ])
+    ->read();
+
 // Read with pagination
 $products = $repository
     ->withPage(2)             // or ->withPage(null) for default page 1
@@ -179,13 +216,12 @@ $products = $repository
     ->withLimit(null, 50)    // use 50 items as default
     ->read();
 
-// Read with sorting (two methods available)
-// Method 1 - using withOrderBy:
+// Read with sorting
 $products = $repository
     ->withOrderBy('name', 'created_at DESC')
     ->read();
 
-// Method 2 - using withSorting:
+// Alternative sorting method
 $products = $repository
     ->withSorting('name', 'DESC')
     ->read();
@@ -207,6 +243,26 @@ $products = $repository->readAll();
 $count = $repository
     ->withFilter(['enabled' => 1])
     ->count();
+```
+
+### Updating Records
+
+```php
+// Update single record
+$affected = $repository->update(1, [
+    'name' => 'Updated Name'
+]);
+
+// Update multiple records
+$affected = $repository->update([1, 2, 3], [
+    'enabled' => 0
+]);
+```
+
+### Deleting Records
+
+```php
+$affected = $repository->delete(1);
 ```
 
 ### Using Transactions
@@ -231,26 +287,6 @@ try {
 }
 ```
 
-### Updating Records
-
-```php
-// Update single record
-$affected = $repository->update(1, [
-    'name' => 'Updated Name'
-]);
-
-// Update multiple records
-$affected = $repository->update([1, 2, 3], [
-    'enabled' => 0
-]);
-```
-
-### Deleting Records
-
-```php
-$affected = $repository->delete(1);
-```
-
 ### Creating Empty Record
 
 ```php
@@ -272,61 +308,35 @@ The repository supports various placeholder types from solophp/database:
 - `?d` - Date (DateTimeImmutable)
 - `?l` - LIKE parameter (adds '%' for LIKE queries)
 
-## Filter Configuration
+## Advanced Search Configuration
 
-The FilterConfig class allows you to define complex filters with selective loading:
+The new search functionality provides flexible ways to search across multiple fields:
 
-```php
-new FilterConfig(
-    where: 'AND field = ?i',    // WHERE condition
-    select: 'field AS alias',    // Additional SELECT fields
-    joins: 'LEFT JOIN table'     // Required JOINs
-);
-```
-
-Example configuration with different types of filters:
 ```php
 protected function filters(): array
 {
     return [
-        // Simple filter
-        'id' => new FilterConfig(
-            where: 'AND p.id IN(?a)'
-        ),
-        
-        // Filter with additional fields
-        'category_id' => new FilterConfig(
-            where: 'AND c.id IN(?a)',
-            select: 'c.name AS category_name, c.path AS category_path',
-            joins: 'LEFT JOIN categories c ON c.id = p.category_id'
-        ),
-        
-        // Complex filter with callback
+        // Basic search across multiple fields
         'search' => new FilterConfig(
-            where: fn($value) => $this->db->prepare(
-            "AND (p.name LIKE ?l OR p.sku LIKE ?l)", 
-            $value, 
-            $value
+            search: ['name', 'sku', 'description']
             ),
+        
+        // Combining search with additional data
+        'advanced_search' => new FilterConfig(
+            search: ['name', 'sku'],
             select: 'b.name AS brand_name',
             joins: 'LEFT JOIN brands b ON b.id = p.brand_id'
-        ),
-
-        // Date filter
-        'created_after' => new FilterConfig(
-            where: 'AND p.created_at > ?d'
-        ),
-        
-        // Raw SQL filter
-        'custom' => new FilterConfig(
-            where: 'AND ?p',
-            select: 'CONCAT(field1, field2) AS combined'
         )
     ];
 }
 ```
 
-Each filter can specify its own SELECT fields and JOIN conditions, which will be automatically merged and deduplicated in the final query.
+Search features include:
+- Multiple field search support
+- Field-specific search using `field:value` syntax
+- Default field fallback (first field in array)
+- Word-by-word matching
+- Automatic LIKE query generation
 
 ## Requirements
 
