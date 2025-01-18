@@ -41,9 +41,9 @@ abstract class Repository implements RepositoryInterface
         );
 
         $orderBy = $this->orderBy ? 'ORDER BY ' . implode(', ', array_map(
-            fn($s) => "{$this->alias}.$s",
-            $this->orderBy
-        )) : '';
+                fn($s) => "{$this->alias}.$s",
+                $this->orderBy
+            )) : '';
 
         $this->queryParams = new QueryParameters(
             select: $this->select(),
@@ -54,15 +54,213 @@ abstract class Repository implements RepositoryInterface
         );
     }
 
-    protected function select(): string { return '*'; }
-    protected function joins(): string { return ''; }
-    protected function filters(): array { return []; }
+    protected function select(): string
+    {
+        return '*';
+    }
 
-    public function withDistinct(bool $distinct = true): self
+    protected function joins(): string
+    {
+        return '';
+    }
+
+    protected function filters(): array
+    {
+        return [];
+    }
+
+    public function create(array $data): ?object
+    {
+        $this->db->query("INSERT INTO ?t SET ?A", $this->table, $data);
+        $id = $this->db->lastInsertId();
+
+        if (!$id) {
+            return null;
+        }
+
+        return $this->findById((int)$id);
+    }
+
+    public function createMany(array $records): array
+    {
+        if (empty($records)) {
+            throw new \InvalidArgumentException('Records array cannot be empty');
+        }
+
+        $this->beginTransaction();
+
+        try {
+            $createdIds = [];
+
+            foreach ($records as $data) {
+                $this->db->query("INSERT INTO ?t SET ?A", $this->table, $data);
+
+                $id = $this->db->lastInsertId();
+                if ($id) {
+                    $createdIds[] = (int)$id;
+                } elseif (isset($data['id'])) {
+                    $createdIds[] = (int)$data['id'];
+                }
+            }
+
+            $this->commit();
+
+            return empty($createdIds) ? [] : $this->findBy(['id' => $createdIds]);
+
+        } catch (\Exception $e) {
+            $this->rollback();
+            throw $e;
+        }
+    }
+
+    public function update(int $id, array $data): ?object
+    {
+        if (empty($data)) {
+            throw new \InvalidArgumentException('Data cannot be empty for update operation');
+        }
+
+        $this->db->query(
+            "UPDATE ?t SET ?A WHERE id = ?i",
+            $this->table,
+            $data,
+            $id
+        );
+
+        $affected = $this->db->rowCount();
+        return $affected ? $this->findById($id) : null;
+    }
+
+    public function updateMany(array $ids, array $data): array
+    {
+        if (empty($data)) {
+            throw new \InvalidArgumentException('Data cannot be empty for update operation');
+        }
+
+        if (empty($ids)) {
+            throw new \InvalidArgumentException('IDs array cannot be empty');
+        }
+
+        $this->db->query(
+            "UPDATE ?t SET ?A WHERE id IN(?a)",
+            $this->table,
+            $data,
+            $ids
+        );
+
+        $affected = $this->db->rowCount();
+        return $affected ? $this->findBy(['id' => $ids]) : [];
+    }
+
+    public function patch(int $id, array $data): ?object
+    {
+        if (empty($data)) {
+            throw new \InvalidArgumentException('Data cannot be empty for patch operation');
+        }
+
+        $this->db->query(
+            "UPDATE ?t SET ?A WHERE id = ?i",
+            $this->table,
+            $data,
+            $id
+        );
+
+        $affected = $this->db->rowCount();
+        return $affected ? $this->findById($id) : null;
+    }
+
+    public function patchMany(array $ids, array $data): array
+    {
+        if (empty($data)) {
+            throw new \InvalidArgumentException('Data cannot be empty for patch operation');
+        }
+
+        if (empty($ids)) {
+            throw new \InvalidArgumentException('IDs array cannot be empty');
+        }
+
+        $this->db->query(
+            "UPDATE ?t SET ?A WHERE id IN(?a)",
+            $this->table,
+            $data,
+            $ids
+        );
+
+        $affected = $this->db->rowCount();
+        return $affected ? $this->findBy(['id' => $ids]) : [];
+    }
+
+    public function delete(int $id): int
+    {
+        $this->db->query(
+            "DELETE FROM ?t WHERE id = ?i LIMIT 1",
+            $this->table,
+            $id
+        );
+        return $this->db->rowCount();
+    }
+
+    public function deleteMany(array $ids): int
+    {
+        if (empty($ids)) {
+            throw new \InvalidArgumentException('IDs array cannot be empty');
+        }
+
+        $this->db->query(
+            "DELETE FROM ?t WHERE id IN(?a)",
+            $this->table,
+            $ids
+        );
+        return $this->db->rowCount();
+    }
+
+    public function findById(int $id): ?object
+    {
+        $this->db->query(
+            "SELECT * FROM ?t WHERE id = ?i LIMIT 1",
+            $this->table,
+            $id
+        );
+        $result = $this->db->fetchObject();
+
+        return $result === false ? null : $result;
+    }
+
+    public function findBy(array $criteria): array
+    {
+        return $this->withFilter($criteria)->find();
+    }
+
+    public function findOneBy(array $criteria): ?object
+    {
+        return $this->withFilter($criteria)->findOne();
+    }
+
+    public function find(): array
+    {
+        $query = $this->queryBuilder->buildSelect($this->queryParams);
+        $this->db->query($query);
+        return $this->db->fetchAll($this->queryParams->getPrimaryKey());
+    }
+
+    public function findOne(): ?object
     {
         $clone = clone $this;
-        $clone->queryParams = $this->queryParams->withDistinct($distinct);
-        return $clone;
+        $clone->queryParams = $this->queryParams
+            ->withPage(1)
+            ->withLimit(1);
+
+        $query = $clone->queryBuilder->buildSelect($clone->queryParams);
+        $clone->db->query($query);
+        $result = $clone->db->fetchObject();
+
+        return $result === false ? null : $result;
+    }
+
+    public function findAll(): array
+    {
+        $clone = clone $this;
+        $clone->queryParams = $this->queryParams->clearLimit();
+        return $clone->find();
     }
 
     public function withFilter(?array $filters): self
@@ -101,7 +299,7 @@ abstract class Repository implements RepositoryInterface
     public function withSorting(?string $order, ?string $direction = 'ASC'): self
     {
         if ($order === null) {
-            return $this;
+            return clone $this;
         }
 
         $direction = strtoupper($direction ?? 'ASC');
@@ -134,67 +332,18 @@ abstract class Repository implements RepositoryInterface
         return $clone;
     }
 
+    public function withDistinct(bool $distinct = true): self
+    {
+        $clone = clone $this;
+        $clone->queryParams = $this->queryParams->withDistinct($distinct);
+        return $clone;
+    }
+
     public function withPrimaryKey(string $primaryKey): self
     {
         $clone = clone $this;
         $clone->queryParams = $this->queryParams->withPrimaryKey($primaryKey);
         return $clone;
-    }
-
-    public function create(array $data): int|false
-    {
-        $this->db->query("INSERT INTO ?t SET ?A", $this->table, $data);
-        $id = $this->db->lastInsertId();
-        return $id ? (int)$id : false;
-    }
-
-    public function update(int|array $id, array $data): int
-    {
-        $this->db->query(
-            "UPDATE ?t SET ?A WHERE id IN(?a)",
-            $this->table,
-            $data,
-            (array)$id
-        );
-        return $this->db->rowCount();
-    }
-
-    public function delete(int $id): int
-    {
-        $this->db->query(
-            "DELETE FROM ?t WHERE id = ?i LIMIT 1",
-            $this->table,
-            $id
-        );
-        return $this->db->rowCount();
-    }
-
-    public function read(): array
-    {
-        $query = $this->queryBuilder->buildSelect($this->queryParams);
-        $this->db->query($query);
-        return $this->db->fetchAll($this->queryParams->getPrimaryKey());
-    }
-
-    public function readOne(): ?object
-    {
-        $clone = clone $this;
-        $clone->queryParams = $this->queryParams
-            ->withPage(1)
-            ->withLimit(1);
-
-        $query = $clone->queryBuilder->buildSelect($clone->queryParams);
-        $clone->db->query($query);
-        $result = $clone->db->fetchObject();
-
-        return $result === false ? null : $result;
-    }
-
-    public function readAll(): array
-    {
-        $clone = clone $this;
-        $clone->queryParams = $this->queryParams->clearLimit();
-        return $clone->read();
     }
 
     public function count(): int

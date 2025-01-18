@@ -10,6 +10,124 @@ namespace Solo\Repository\Interfaces;
 interface RepositoryInterface
 {
     /**
+     * Create a new record
+     *
+     * @param array $data Record data
+     * @return object|null Created record or null on failure
+     */
+    public function create(array $data): ?object;
+
+    /**
+     * Create multiple records
+     *
+     * @param array[] $records Array of record data arrays
+     * @return array Array of created records
+     * @throws \InvalidArgumentException If records array is empty
+     */
+    public function createMany(array $records): array;
+
+    /**
+     * Update existing record
+     *
+     * @param int $id ID of record to update
+     * @param array $data Updated data
+     * @return object|null Updated record or null if not found/updated
+     */
+    public function update(int $id, array $data): ?object;
+
+    /**
+     * Update multiple records
+     *
+     * @param array $ids Array of record IDs to update
+     * @param array $data Updated data
+     * @return array Array of updated records
+     * @throws \InvalidArgumentException If IDs array is empty
+     */
+    public function updateMany(array $ids, array $data): array;
+
+    /**
+     * Partially update a record with only provided fields
+     *
+     * @param int $id ID of record to patch
+     * @param array $data Fields to update
+     * @return object|null Updated record or null if not found/updated
+     * @throws \InvalidArgumentException If data array is empty
+     */
+    public function patch(int $id, array $data): ?object;
+
+    /**
+     * Partially update multiple records with only provided fields
+     *
+     * @param array $ids Array of record IDs to patch
+     * @param array $data Fields to update
+     * @return array Array of updated records
+     * @throws \InvalidArgumentException If IDs array or data array is empty
+     */
+    public function patchMany(array $ids, array $data): array;
+
+    /**
+     * Delete a record
+     *
+     * @param int $id Record ID
+     * @return int Number of affected rows
+     */
+    public function delete(int $id): int;
+
+    /**
+     * Delete multiple records
+     *
+     * @param array $ids Array of record IDs to delete
+     * @return int Number of affected rows
+     * @throws \InvalidArgumentException If IDs array is empty
+     */
+    public function deleteMany(array $ids): int;
+
+    /**
+     * Find record by ID
+     *
+     * @param int $id Record ID
+     * @return object|null Found record or null if not found
+     */
+    public function findById(int $id): ?object;
+
+    /**
+     * Find records by criteria
+     *
+     * @param array $criteria Search criteria
+     * @return array Array of found records
+     */
+    public function findBy(array $criteria): array;
+
+    /**
+     * Find single record by criteria
+     *
+     * @param array $criteria Search criteria
+     * @return object|null Found record or null if not found
+     */
+    public function findOneBy(array $criteria): ?object;
+
+    /**
+     * Find records based on current query state
+     *
+     * @return array Array of records
+     */
+    public function find(): array;
+
+    /**
+     * Find single record based on current query state
+     *
+     * @return object|null Found record or null if not found
+     */
+    public function findOne(): ?object;
+
+    /**
+     * Find all records without pagination
+     *
+     * @return array Array of all records
+     */
+    public function findAll(): array;
+
+    /**
      * Whether DISTINCT should be applied to SELECT queries
      *
      * @param bool $distinct Whether to enable DISTINCT (true by default)
@@ -46,6 +164,7 @@ interface RepositoryInterface
      * Set the page number for pagination
      *
      * @param int|null $page Page number (1-based)
+     * @param int $default Default page if none provided
      * @return self New instance with applied pagination
      */
     public function withPage(?int $page, int $default = 1): self;
@@ -54,6 +173,7 @@ interface RepositoryInterface
      * Set the number of items per page
      *
      * @param int|null $limit Number of items per page
+     * @param int $default Default limit if none provided
      * @return self New instance with applied limit
      */
     public function withLimit(?int $limit, int $default = 25): self;
@@ -65,52 +185,6 @@ interface RepositoryInterface
      * @return self New instance with set primary key
      */
     public function withPrimaryKey(string $primaryKey): self;
-
-    /**
-     * Create a new record
-     *
-     * @param array $data Record data
-     * @return int|false The ID of created record or false on failure
-     */
-    public function create(array $data): int|false;
-
-    /**
-     * Update existing record(s)
-     *
-     * @param int|array $id Single ID or array of IDs to update
-     * @param array $data Updated data
-     * @return int Number of affected rows
-     */
-    public function update(int|array $id, array $data): int;
-
-    /**
-     * Delete a record
-     *
-     * @param int $id Record ID
-     * @return int Number of affected rows
-     */
-    public function delete(int $id): int;
-
-    /**
-     * Read records based on current query state
-     *
-     * @return array Array of records
-     */
-    public function read(): array;
-
-    /**
-     * Read a single record based on current query state
-     *
-     * @return object|null Found record or null if not found
-     */
-    public function readOne(): ?object;
-
-    /**
-     * Read all records without pagination
-     *
-     * @return array Array of all records
-     */
-    public function readAll(): array;
 
     /**
      * Count records based on current query state

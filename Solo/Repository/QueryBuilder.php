@@ -56,11 +56,7 @@ final class QueryBuilder
         $select = [];
 
         foreach ($filters as $field => $value) {
-        if ($value === null) {
-            continue;
-        }
-
-            if (!isset($filterDefinitions[$field])) {
+           if ($value === null || !isset($filterDefinitions[$field])) {
                 continue;
             }
 

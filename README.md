@@ -1,6 +1,6 @@
 # Base Repository Class
 
-[![Latest Version](https://img.shields.io/badge/version-2.4.0-blue.svg)](https://github.com/solophp/repository)
+[![Latest Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/solophp/repository)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](https://opensource.org/licenses/MIT)
 
 A flexible base repository class for PHP 8+ with query builder and CRUD operations, featuring immutable architecture and selective loading.
@@ -24,7 +24,8 @@ The package will automatically install required dependencies, including [solophp
     - LIKE queries and raw SQL
     - Custom callbacks
     - Advanced search functionality with field selection
-- Support for transactions
+- Full CRUD and batch operations support
+- Transaction support
 - IDE-friendly with type safety
 - Zero config for basic usage
 
@@ -35,43 +36,46 @@ CRUD and query methods:
 ```php
 interface RepositoryInterface
 {
-    // Create a new record
-    public function create(array $data): int|false;
+    // Create operations
+    public function create(array $data): ?object;
+    public function createMany(array $records): array;
 
-    // Update existing record(s)
-    public function update(int|array $id, array $data): int;
+    // Update operations
+    public function update(int $id, array $data): ?object;
+    public function updateMany(array $ids, array $data): array;
+    public function patch(int $id, array $data): ?object;
+    public function patchMany(array $ids, array $data): array;
 
-    // Delete a record
+    // Delete operations
     public function delete(int $id): int;
+    public function deleteMany(array $ids): int;
 
-    // Read records based on current query state
-    public function read(): array;
-
-    // Read a single record based on current query state
-    public function readOne(): ?object;
-
-    // Read all records
-    public function readAll(): array;
-
-    // Count records based on current query state
-    public function count(): int;
-
-    // Create an empty record with default values
-    public function createEmptyRecord(): object;
-
-    // Transaction management
-    public function beginTransaction(): bool;
-    public function commit(): bool;
-    public function rollback(): bool;
+    // Find operations
+    public function findById(int $id): ?object;
+    public function findBy(array $criteria): array;
+    public function findOneBy(array $criteria): ?object;
+    public function find(): array;
+    public function findOne(): ?object;
+    public function findAll(): array;
 
     // Query building methods
     public function withFilter(?array $filters): self;
     public function withOrderBy(?string ...$order): self;
-    public function withSorting(?string $order, string $direction = 'ASC'): self;
+    public function withSorting(?string $order, ?string $direction = 'ASC'): self;
     public function withPage(?int $page, int $default = 1): self;
     public function withLimit(?int $limit, int $default = 25): self;
     public function withPrimaryKey(string $primaryKey): self;
     public function withDistinct(bool $distinct = true): self;
+    
+    // Additional methods
+    public function count(): int;
+    public function exists(array $filters = []): bool;
+    public function createEmptyRecord(): object;
+    
+    // Transaction management
+    public function beginTransaction(): bool;
+    public function commit(): bool;
+    public function rollback(): bool;
 }
 ```
 
@@ -153,12 +157,6 @@ class ProductsRepository extends Repository
             )
         ];
     }
-
-    private function buildCustomSearch(string $value): string 
-    {
-        //some logic
-        return $filter;
-    }
 }
 ```
 
@@ -167,102 +165,120 @@ class ProductsRepository extends Repository
 ### Creating Records
 
 ```php
-// Simple create
-$id = $repository->create([
+// Create single record
+$product = $repository->create([
     'name' => 'New Product',
     'enabled' => 1
-]); // Returns int ID or false
+]); // Returns created record object or null
+
+// Create multiple records
+$products = $repository->createMany([
+    ['name' => 'Product 1', 'enabled' => 1],
+    ['name' => 'Product 2', 'enabled' => 1]
+]); // Returns array of created records
 ```
 
-### Reading Records
+### Finding Records
 
 ```php
-// Read with filters
+// Find by ID
+$product = $repository->findById(1);
+
+// Find with criteria
+$products = $repository->findBy(['status' => 'active']);
+$product = $repository->findOneBy(['email' => 'test@example.com']);
+
+// Find with filters
 $products = $repository
     ->withFilter([
         'enabled' => 1,
         'category_id' => [1, 2, 3]
     ])
-    ->read();
+    ->find();
 
 // Using search functionality
 $products = $repository
     ->withFilter([
-        'search' => 'keyword'           // Search in default field (first in array)
+        'search' => 'keyword'           // Search in default field
     ])
-    ->read();
+    ->find();
 
 $products = $repository
     ->withFilter([
         'search' => 'id:12345'          // Search in specific field
     ])
-    ->read();
+    ->find();
 
+// Find with pagination
 $products = $repository
-    ->withFilter([
-        'search' => 'red shirt'         // Multi-word search
-    ])
-    ->read();
+    ->withPage(2)
+    ->withLimit(20)
+    ->find();
 
-// Read with pagination
-$products = $repository
-    ->withPage(2)             // or ->withPage(null) for default page 1
-    ->withLimit(20)          // or ->withLimit(null) for default 25 items
-    ->read();
-
-// Read with custom defaults
-$products = $repository
-    ->withPage(null, 5)       // use page 5 as default
-    ->withLimit(null, 50)    // use 50 items as default
-    ->read();
-
-// Read with sorting
+// Find with sorting
 $products = $repository
     ->withOrderBy('name', 'created_at DESC')
-    ->read();
+    ->find();
 
 // Alternative sorting method
 $products = $repository
     ->withSorting('name', 'DESC')
-    ->read();
+    ->find();
 
-// Read with DISTINCT
+// Find with DISTINCT
 $products = $repository
     ->withDistinct()
-    ->read();
+    ->find();
 
-// Read one record
+// Find one record
 $product = $repository
-    ->withFilter(['id' => 1])
-    ->readOne();
+    ->withFilter(['status' => 'active'])
+    ->findOne();
 
-// Read all records
-$products = $repository->readAll();
-
-// Count records
-$count = $repository
-    ->withFilter(['enabled' => 1])
-    ->count();
+// Find all records
+$products = $repository->findAll();
 ```
 
 ### Updating Records
 
 ```php
 // Update single record
-$affected = $repository->update(1, [
-    'name' => 'Updated Name'
-]);
+$updated = $repository->update(1, [
+    'name' => 'Updated Name',
+    'status' => 'active'
+]); // Returns updated record or null
 
 // Update multiple records
-$affected = $repository->update([1, 2, 3], [
-    'enabled' => 0
-]);
+$updatedRecords = $repository->updateMany([1, 2, 3], [
+    'status' => 'inactive'
+]); // Returns array of updated records
+
+// Patch single record
+$patched = $repository->patch(1, [
+    'status' => 'active'
+]); // Returns updated record or null
+
+// Patch multiple records
+$patchedRecords = $repository->patchMany([1, 2, 3], [
+    'status' => 'active'
+]); // Returns array of updated records
 ```
+
+### Update vs Patch
+
+- `update()` is used for full record updates, expecting all fields to be provided
+- `patch()` is used for partial updates, updating only specified fields
+- Both methods return the updated record(s)
+- Both methods validate that data array is not empty
 
 ### Deleting Records
 
 ```php
+// Delete single record
 $affected = $repository->delete(1);
+
+// Delete multiple records
+$affected = $repository->deleteMany([1, 2, 3]);
 ```
 
 ### Using Transactions
@@ -271,14 +287,16 @@ $affected = $repository->delete(1);
 try {
     $repository->beginTransaction();
     
-    $id = $repository->create([
+    $product = $repository->create([
         'name' => 'New Product',
         'enabled' => 1
     ]);
     
-    $categoryRepo->update($id, [
+    if ($product) {
+        $updated = $categoryRepo->update($product->id, [
         'category_id' => 2
     ]);
+    }
     
     $repository->commit();
 } catch (\Exception $e) {
@@ -310,7 +328,7 @@ The repository supports various placeholder types from solophp/database:
 
 ## Advanced Search Configuration
 
-The new search functionality provides flexible ways to search across multiple fields:
+The search functionality provides flexible ways to search across multiple fields:
 
 ```php
 protected function filters(): array
