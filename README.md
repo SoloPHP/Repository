@@ -50,13 +50,15 @@ interface RepositoryInterface
     public function delete(int $id): int;
     public function deleteMany(array $ids): int;
 
-    // Find operations
+    // Direct find operations
     public function findById(int $id): ?object;
     public function findBy(array $criteria): array;
     public function findOneBy(array $criteria): ?object;
-    public function find(): array;
-    public function findOne(): ?object;
-    public function findAll(): array;
+
+    // Query builder operations
+    public function get(): array;
+    public function getOne(): ?object;
+    public function getAll(): array;
 
     // Query building methods
     public function withFilter(?array $filters): self;
@@ -178,66 +180,87 @@ $products = $repository->createMany([
 ]); // Returns array of created records
 ```
 
-### Finding Records
+### Finding and Getting Records
 
 ```php
-// Find by ID
+// Direct find operations
 $product = $repository->findById(1);
-
-// Find with criteria
 $products = $repository->findBy(['status' => 'active']);
 $product = $repository->findOneBy(['email' => 'test@example.com']);
 
-// Find with filters
+// Query builder operations
 $products = $repository
     ->withFilter([
         'enabled' => 1,
         'category_id' => [1, 2, 3]
     ])
-    ->find();
+    ->get();
 
 // Using search functionality
 $products = $repository
     ->withFilter([
         'search' => 'keyword'           // Search in default field
     ])
-    ->find();
+    ->get();
 
 $products = $repository
     ->withFilter([
         'search' => 'id:12345'          // Search in specific field
     ])
-    ->find();
+    ->get();
 
-// Find with pagination
+// Get with pagination
 $products = $repository
     ->withPage(2)
     ->withLimit(20)
-    ->find();
+    ->get();
 
-// Find with sorting
+// Get with sorting
 $products = $repository
     ->withOrderBy('name', 'created_at DESC')
-    ->find();
+    ->get();
 
 // Alternative sorting method
 $products = $repository
     ->withSorting('name', 'DESC')
-    ->find();
+    ->get();
 
-// Find with DISTINCT
+// Get with DISTINCT
 $products = $repository
     ->withDistinct()
-    ->find();
+    ->get();
 
-// Find one record
+// Get one record
 $product = $repository
     ->withFilter(['status' => 'active'])
-    ->findOne();
+    ->getOne();
 
-// Find all records
-$products = $repository->findAll();
+// Get all records
+$products = $repository->getAll();
 ```
+
+### Search Methods
+
+The repository provides two approaches to retrieving data:
+
+1. Direct find methods:
+- `findById()` - quick lookup by primary key
+- `findBy()` - simple search by criteria array
+- `findOneBy()` - get first record matching criteria
+
+2. Query builder methods:
+- `get()` - fetch records using current query state
+- `getOne()` - fetch single record using query state
+- `getAll()` - fetch all records without pagination
+
+Use direct find methods for simple lookups and the query builder for complex queries with filtering, sorting, and pagination.
+
+### Update vs Patch
+
+- `update()` is used for full record updates, expecting all fields to be provided
+- `patch()` is used for partial updates, updating only specified fields
+- Both methods return the updated record(s)
+- Both methods validate that data array is not empty
 
 ### Updating Records
 
@@ -263,13 +286,6 @@ $patchedRecords = $repository->patchMany([1, 2, 3], [
     'status' => 'active'
 ]); // Returns array of updated records
 ```
-
-### Update vs Patch
-
-- `update()` is used for full record updates, expecting all fields to be provided
-- `patch()` is used for partial updates, updating only specified fields
-- Both methods return the updated record(s)
-- Both methods validate that data array is not empty
 
 ### Deleting Records
 

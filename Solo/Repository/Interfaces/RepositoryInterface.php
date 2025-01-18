@@ -14,6 +14,7 @@ interface RepositoryInterface
      *
      * @param array $data Record data
      * @return object|null Created record or null on failure
+     * @throws \RuntimeException If ID is required but not provided
      */
     public function create(array $data): ?object;
 
@@ -23,6 +24,7 @@ interface RepositoryInterface
      * @param array[] $records Array of record data arrays
      * @return array Array of created records
      * @throws \InvalidArgumentException If records array is empty
+     * @throws \RuntimeException If ID is required but not provided
      */
     public function createMany(array $records): array;
 
@@ -32,6 +34,7 @@ interface RepositoryInterface
      * @param int $id ID of record to update
      * @param array $data Updated data
      * @return object|null Updated record or null if not found/updated
+     * @throws \InvalidArgumentException If data array is empty
      */
     public function update(int $id, array $data): ?object;
 
@@ -41,7 +44,7 @@ interface RepositoryInterface
      * @param array $ids Array of record IDs to update
      * @param array $data Updated data
      * @return array Array of updated records
-     * @throws \InvalidArgumentException If IDs array is empty
+     * @throws \InvalidArgumentException If IDs array or data array is empty
      */
     public function updateMany(array $ids, array $data): array;
 
@@ -107,25 +110,25 @@ interface RepositoryInterface
     public function findOneBy(array $criteria): ?object;
 
     /**
-     * Find records based on current query state
+     * Get records based on current query state
      *
      * @return array Array of records
      */
-    public function find(): array;
+    public function get(): array;
 
     /**
-     * Find single record based on current query state
+     * Get single record based on current query state
      *
      * @return object|null Found record or null if not found
      */
-    public function findOne(): ?object;
+    public function getOne(): ?object;
 
     /**
-     * Find all records without pagination
+     * Get all records without pagination
      *
      * @return array Array of all records
      */
-    public function findAll(): array;
+    public function getAll(): array;
 
     /**
      * Whether DISTINCT should be applied to SELECT queries

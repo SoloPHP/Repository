@@ -72,13 +72,16 @@ abstract class Repository implements RepositoryInterface
     public function create(array $data): ?object
     {
         $this->db->query("INSERT INTO ?t SET ?A", $this->table, $data);
-        $id = $this->db->lastInsertId();
 
-        if (!$id) {
-            return null;
+        if ($id = $this->db->lastInsertId()) {
+        return $this->findById((int)$id);
+    }
+
+        if (!isset($data['id'])) {
+            throw new \RuntimeException("ID must be provided for tables without auto_increment");
         }
 
-        return $this->findById((int)$id);
+        return $this->findById((int)$data['id']);
     }
 
     public function createMany(array $records): array
@@ -100,12 +103,13 @@ abstract class Repository implements RepositoryInterface
                     $createdIds[] = (int)$id;
                 } elseif (isset($data['id'])) {
                     $createdIds[] = (int)$data['id'];
+                } else {
+                    throw new \RuntimeException("ID must be provided for tables without auto_increment");
                 }
             }
 
             $this->commit();
-
-            return empty($createdIds) ? [] : $this->findBy(['id' => $createdIds]);
+            return $this->findBy(['id' => $createdIds]);
 
         } catch (\Exception $e) {
             $this->rollback();
@@ -132,12 +136,12 @@ abstract class Repository implements RepositoryInterface
 
     public function updateMany(array $ids, array $data): array
     {
-        if (empty($data)) {
-            throw new \InvalidArgumentException('Data cannot be empty for update operation');
-        }
-
         if (empty($ids)) {
             throw new \InvalidArgumentException('IDs array cannot be empty');
+        }
+
+        if (empty($data)) {
+            throw new \InvalidArgumentException('Data cannot be empty for update operation');
         }
 
         $this->db->query(
@@ -227,22 +231,22 @@ abstract class Repository implements RepositoryInterface
 
     public function findBy(array $criteria): array
     {
-        return $this->withFilter($criteria)->find();
+        return $this->withFilter($criteria)->get();
     }
 
     public function findOneBy(array $criteria): ?object
     {
-        return $this->withFilter($criteria)->findOne();
+        return $this->withFilter($criteria)->getOne();
     }
 
-    public function find(): array
+    public function get(): array
     {
         $query = $this->queryBuilder->buildSelect($this->queryParams);
         $this->db->query($query);
         return $this->db->fetchAll($this->queryParams->getPrimaryKey());
     }
 
-    public function findOne(): ?object
+    public function getOne(): ?object
     {
         $clone = clone $this;
         $clone->queryParams = $this->queryParams
@@ -256,11 +260,11 @@ abstract class Repository implements RepositoryInterface
         return $result === false ? null : $result;
     }
 
-    public function findAll(): array
+    public function getAll(): array
     {
         $clone = clone $this;
         $clone->queryParams = $this->queryParams->clearLimit();
-        return $clone->find();
+        return $clone->get();
     }
 
     public function withFilter(?array $filters): self
