@@ -94,6 +94,14 @@ interface RepositoryInterface
     public function findById(int $id): ?object;
 
     /**
+     * Find multiple records by IDs
+     *
+     * @param array $ids Array of record IDs
+     * @return array Array of found records
+     */
+    public function findByIds(array $ids): array;
+
+    /**
      * Find records by criteria
      *
      * @param array $criteria Search criteria

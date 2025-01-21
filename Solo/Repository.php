@@ -109,7 +109,7 @@ abstract class Repository implements RepositoryInterface
             }
 
             $this->commit();
-            return $this->findBy(['id' => $createdIds]);
+            return $this->findByIds($createdIds);
 
         } catch (\Exception $e) {
             $this->rollback();
@@ -130,8 +130,7 @@ abstract class Repository implements RepositoryInterface
             $id
         );
 
-        $affected = $this->db->rowCount();
-        return $affected ? $this->findById($id) : null;
+        return $this->findById($id);
     }
 
     public function updateMany(array $ids, array $data): array
@@ -151,8 +150,7 @@ abstract class Repository implements RepositoryInterface
             $ids
         );
 
-        $affected = $this->db->rowCount();
-        return $affected ? $this->findBy(['id' => $ids]) : [];
+        return $this->findByIds($ids);
     }
 
     public function patch(int $id, array $data): ?object
@@ -168,8 +166,7 @@ abstract class Repository implements RepositoryInterface
             $id
         );
 
-        $affected = $this->db->rowCount();
-        return $affected ? $this->findById($id) : null;
+        return $this->findById($id);
     }
 
     public function patchMany(array $ids, array $data): array
@@ -189,8 +186,7 @@ abstract class Repository implements RepositoryInterface
             $ids
         );
 
-        $affected = $this->db->rowCount();
-        return $affected ? $this->findBy(['id' => $ids]) : [];
+        return $this->findByIds($ids);
     }
 
     public function delete(int $id): int
@@ -227,6 +223,21 @@ abstract class Repository implements RepositoryInterface
         $result = $this->db->fetchObject();
 
         return $result === false ? null : $result;
+    }
+
+    public function findByIds(array $ids): array
+    {
+        if (empty($ids)) {
+            return [];
+        }
+
+        $this->db->query(
+            "SELECT * FROM ?t WHERE id IN(?a)",
+            $this->table,
+            $ids
+        );
+
+        return $this->db->fetchAll();
     }
 
     public function findBy(array $criteria): array

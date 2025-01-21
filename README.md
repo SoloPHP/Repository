@@ -52,6 +52,7 @@ interface RepositoryInterface
 
     // Direct find operations
     public function findById(int $id): ?object;
+    public function findByIds(array $ids): array;
     public function findBy(array $criteria): array;
     public function findOneBy(array $criteria): ?object;
 
@@ -185,6 +186,7 @@ $products = $repository->createMany([
 ```php
 // Direct find operations
 $product = $repository->findById(1);
+$products = $repository->findByIds([1, 2, 3]);
 $products = $repository->findBy(['status' => 'active']);
 $product = $repository->findOneBy(['email' => 'test@example.com']);
 
@@ -245,6 +247,7 @@ The repository provides two approaches to retrieving data:
 
 1. Direct find methods:
 - `findById()` - quick lookup by primary key
+- `findByIds()` - quick lookup by multiple primary keys
 - `findBy()` - simple search by criteria array
 - `findOneBy()` - get first record matching criteria
 
