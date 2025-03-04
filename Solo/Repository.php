@@ -144,7 +144,7 @@ abstract class Repository implements RepositoryInterface
         }
 
         $this->db->query(
-            "UPDATE ?t SET ?A WHERE id IN(?a)",
+            "UPDATE ?t SET ?A WHERE id IN ?a",
             $this->table,
             $data,
             $ids
@@ -180,7 +180,7 @@ abstract class Repository implements RepositoryInterface
         }
 
         $this->db->query(
-            "UPDATE ?t SET ?A WHERE id IN(?a)",
+            "UPDATE ?t SET ?A WHERE id IN ?a",
             $this->table,
             $data,
             $ids
@@ -206,7 +206,7 @@ abstract class Repository implements RepositoryInterface
         }
 
         $this->db->query(
-            "DELETE FROM ?t WHERE id IN(?a)",
+            "DELETE FROM ?t WHERE id IN ?a",
             $this->table,
             $ids
         );
@@ -220,7 +220,7 @@ abstract class Repository implements RepositoryInterface
             $this->table,
             $id
         );
-        $result = $this->db->fetchObject();
+        $result = $this->db->fetch();
 
         return $result === false ? null : $result;
     }
@@ -232,7 +232,7 @@ abstract class Repository implements RepositoryInterface
         }
 
         $this->db->query(
-            "SELECT * FROM ?t WHERE id IN(?a)",
+            "SELECT * FROM ?t WHERE id IN ?a",
             $this->table,
             $ids
         );
@@ -254,7 +254,13 @@ abstract class Repository implements RepositoryInterface
     {
         $query = $this->queryBuilder->buildSelect($this->queryParams);
         $this->db->query($query);
-        return $this->db->fetchAll($this->queryParams->getPrimaryKey());
+        $results = $this->db->fetchAll();
+
+        if(empty($this->queryParams->getPrimaryKey())) {
+            return $results;
+        }
+
+        return array_column($results, null, $this->queryParams->getPrimaryKey());
     }
 
     public function getOne(): ?object
@@ -266,7 +272,7 @@ abstract class Repository implements RepositoryInterface
 
         $query = $clone->queryBuilder->buildSelect($clone->queryParams);
         $clone->db->query($query);
-        $result = $clone->db->fetchObject();
+        $result = $clone->db->fetch();
 
         return $result === false ? null : $result;
     }
@@ -365,7 +371,7 @@ abstract class Repository implements RepositoryInterface
     {
         $query = $this->queryBuilder->buildCount($this->queryParams);
         $this->db->query($query);
-        return $this->db->fetchObject('count');
+        return (int)$this->db->fetchColumn();
     }
 
     public function exists(array $filters = []): bool

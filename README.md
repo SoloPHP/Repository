@@ -1,6 +1,6 @@
 # Base Repository Class
 
-[![Latest Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/solophp/repository)
+[![Latest Version](https://img.shields.io/badge/version-2.1.0-blue.svg)](https://github.com/solophp/repository)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](https://opensource.org/licenses/MIT)
 
 A flexible base repository class for PHP 8+ with query builder and CRUD operations, featuring immutable architecture and selective loading.
@@ -127,12 +127,12 @@ class ProductsRepository extends Repository
         return [
             // Simple filter
             'id' => new FilterConfig(
-                where: 'AND p.id IN(?a)'
+                where: 'AND p.id IN ?a'
             ),
             
             // Filter with negation
             '!id' => new FilterConfig(
-                where: 'AND p.id NOT IN(?a)'
+                where: 'AND p.id NOT IN ?a'
             ),
             
             // Boolean filter
@@ -142,7 +142,7 @@ class ProductsRepository extends Repository
             
             // Filter with additional data
             'category_id' => new FilterConfig(
-                where: 'AND c.id IN(?a)',
+                where: 'AND c.id IN ?a',
                 select: 'c.path AS category_path',
                 joins: 'LEFT JOIN categories c ON c.id = p.category_id'
             ),
@@ -379,7 +379,7 @@ Search features include:
 
 - PHP ^8.2
 - PDO extension
-- solophp/database ^2.5
+- solophp/database ^2.8
 
 ## License
 
