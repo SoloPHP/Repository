@@ -1,0 +1,57 @@
+name: Documentation
+
+on:
+  pull_request:
+    paths: ['docs/**', '.github/workflows/docs.yml']
+  push:
+    branches: [main]
+    paths: ['docs/**', '.github/workflows/docs.yml']
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: Publish documentation to GitHub Pages
+        type: boolean
+        default: false
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: docs/package-lock.json
+      - run: npm ci
+        working-directory: docs
+      - run: npm audit
+        working-directory: docs
+      - run: npm run build
+        working-directory: docs
+      - uses: actions/upload-pages-artifact@v3
+        if: github.event_name == 'workflow_dispatch' && inputs.deploy == true && github.ref == 'refs/heads/main' && github.repository == 'SoloPHP/Repository'
+        with:
+          path: docs/.vitepress/dist
+
+  deploy:
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy == true && github.ref == 'refs/heads/main' && github.repository == 'SoloPHP/Repository'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - uses: actions/configure-pages@v4
+      - uses: actions/deploy-pages@v4
+        id: deployment

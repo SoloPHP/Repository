@@ -1,0 +1,52 @@
+name: solo-repository-database
+
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: repository_test
+      MYSQL_USER: repository
+      MYSQL_PASSWORD: repository
+      MYSQL_ROOT_PASSWORD: repository_root
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: repository_test
+      POSTGRES_USER: repository
+      POSTGRES_PASSWORD: repository
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  tests:
+    image: solo-repository-database-tests:local
+    build:
+      context: .
+      dockerfile: tests/Database/Dockerfile
+      args:
+        PHP_VERSION: ${PHP_VERSION:-8.3}
+    working_dir: /workspace
+    volumes:
+      - .:/workspace:ro
+    environment:
+      REPOSITORY_DATABASE_URL: ${REPOSITORY_DATABASE_URL:-mysql://repository:repository@mysql:3306/repository_test}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    command: ["php", "vendor/bin/phpunit", "-c", "phpunit.database.xml", "--do-not-cache-result"]
