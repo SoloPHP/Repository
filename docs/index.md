@@ -54,12 +54,6 @@ features:
 }
 </style>
 
-::: info Preparing version 1.0.0
-`solophp/repository` is a separate product with the `Solo\Repository` namespace.
-Its first release is not published yet. Existing `solophp/base-repository`
-applications can follow the [migration guide](./guide/migration.md).
-:::
-
 ## Map, write, and read
 
 The application owns its schema and supplies `$db`, a DBAL `Connection`.
@@ -95,11 +89,16 @@ model automatically; `rows()` supports projections without hydration. Read the
 [getting-started guide](./guide/index.md) and [API reference](./guide/api.md) for
 translations, relations, visibility, and transaction contracts.
 
-## Try the local checkout
+## Installation
 
 PHP **8.3+**, Doctrine DBAL **^4.3**, and the matching PDO driver are required.
 The integration matrix covers SQLite, MySQL 8.4, and PostgreSQL 17.
 
-Follow the [local installation instructions](./guide/index.md#install) to try
-this unpublished package. After version 1.0.0 is published, install it with
-`composer require 'solophp/repository:^1.0'`.
+Install from the GitHub repository:
+
+```sh
+composer config repositories.solophp-repository vcs https://github.com/SoloPHP/Repository.git
+composer require 'solophp/repository:dev-main'
+```
+
+Continue with the [getting-started guide](./guide/index.md).

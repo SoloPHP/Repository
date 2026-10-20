@@ -42,7 +42,7 @@ export default defineConfig({
     ],
 
     footer: {
-      message: 'MIT licensed. Version 1.0.0 in preparation.',
+      message: 'MIT licensed.',
       copyright: `Copyright © 2025-${new Date().getFullYear()} SoloPHP`,
     },
 

@@ -11,8 +11,9 @@ package unchanged. Do not merge this new package identity into the old product's
 release branch. The new product starts its own release history at 1.0.0.
 
 Composer derives stable versions from Git tags. Do not add a `version` field to
-`composer.json`. The `dev-main` alias `1.0.x-dev` describes development on `main`; it does not publish a version. A local path repository
-can set the same development version explicitly, as shown in the README.
+`composer.json`. The `dev-main` alias `1.0.x-dev` describes development on `main`;
+it does not publish a version. The README installs this branch directly from
+GitHub through a Composer VCS repository.
 
 ## Verify the release candidate
 

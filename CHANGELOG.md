@@ -2,9 +2,8 @@
 
 ## 1.0.0 — Unreleased
 
-First release of **Solo Repository** (`solophp/repository`), a separate product
-with the `Solo\Repository` namespace and its own version history. This entry
-describes release preparation; no tag has been published.
+Initial release of **Solo Repository** (`solophp/repository`) with the
+`Solo\Repository` namespace.
 
 ### Features
 

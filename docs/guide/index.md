@@ -5,40 +5,17 @@ explicit writes, translations, and batch-loaded relations. Define a `Mapping`,
 compose a `Repository` with a DBAL `Connection`, and query through `ReadQuery`.
 Models can be mutable or immutable.
 
-The first `solophp/repository` release, **1.0.0**, is in preparation. For an
-application using `solophp/base-repository` v3, start with the
-[migration guide](migration.md).
-
 ## Install
 
 PHP 8.3+, Doctrine DBAL ^4.3, and the matching PDO driver are required. The test
 matrix covers SQLite, MySQL 8.4, and PostgreSQL 17.
 
-For this unpublished checkout, add a local path repository to the consumer's
-`composer.json` (adjust `/absolute/path/to/repository`):
-
-```json
-{
-  "repositories": [
-    {
-      "type": "path",
-      "url": "/absolute/path/to/repository",
-      "options": {
-        "versions": {"solophp/repository": "1.0.x-dev"}
-      }
-    }
-  ]
-}
-```
-
-Merge this entry into an existing `repositories` list, then install explicitly:
+Install from the GitHub repository:
 
 ```sh
-composer require 'solophp/repository:1.0.x-dev@dev'
+composer config repositories.solophp-repository vcs https://github.com/SoloPHP/Repository.git
+composer require 'solophp/repository:dev-main'
 ```
-
-After `1.0.0` is published, the stable command will be
-`composer require 'solophp/repository:^1.0'`.
 
 ## Map an existing table
 

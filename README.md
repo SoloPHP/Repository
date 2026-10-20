@@ -4,12 +4,6 @@ Typed PHP repositories with consistent translation fallback and batch-loaded rel
 
 Map tables to your own objects, reuse query settings, and write data explicitly.
 
-**Release status:** preparing the first **1.0.0** release of `solophp/repository`.
-This is a separate product with its own namespace, `Solo\Repository`, and version
-history. No release or Packagist package has been published yet. Existing
-`solophp/base-repository` users can
-follow the [migration guide](docs/guide/migration.md).
-
 ## Requirements and installation
 
 - PHP **8.3+** and Doctrine DBAL **^4.3**.
@@ -17,40 +11,12 @@ follow the [migration guide](docs/guide/migration.md).
 - Tested server versions: **MySQL 8.4** and **PostgreSQL 17**, plus SQLite.
   Other DBAL platforms are not automatically supported.
 
-Clone the source to try the package before its first release:
+Install from the GitHub repository:
 
 ```sh
-git clone https://github.com/SoloPHP/Repository.git
-cd Repository
-composer install
-composer test
+composer config repositories.solophp-repository vcs https://github.com/SoloPHP/Repository.git
+composer require 'solophp/repository:dev-main'
 ```
-
-To use the checkout in an application, add a local path repository to the consumer's
-`composer.json` (adjust `/absolute/path/to/repository`):
-
-```json
-{
-  "repositories": [
-    {
-      "type": "path",
-      "url": "/absolute/path/to/repository",
-      "options": {
-        "versions": {"solophp/repository": "1.0.x-dev"}
-      }
-    }
-  ]
-}
-```
-
-Merge this entry into an existing `repositories` list, then install explicitly:
-
-```sh
-composer require 'solophp/repository:1.0.x-dev@dev'
-```
-
-After `1.0.0` is published, the stable command will be
-`composer require 'solophp/repository:^1.0'`.
 
 ## Quick start
 
@@ -131,6 +97,8 @@ There is no identity map, lazy loading, automatic cascade save, or change tracki
 ## Development
 
 ```sh
+git clone https://github.com/SoloPHP/Repository.git
+cd Repository
 composer install
 composer test
 php examples/crud.php

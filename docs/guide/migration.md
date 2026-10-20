@@ -2,7 +2,7 @@
 
 This guide moves an application from **`solophp/base-repository` v3** to
 **`solophp/repository` 1.0**. Solo Repository is a separate package with the
-`Solo\Repository` namespace. Its first release is in preparation.
+`Solo\Repository` namespace.
 
 The new package uses composition and does not contain `BaseRepository`,
 `RepositoryInterface`, or the old singular `Relation` namespace. `Repository`
@@ -27,12 +27,9 @@ Solo Repository requires PHP `^8.3` and Doctrine DBAL `^4.3`. Update the
 application's PHP runtime, PDO driver, and dependency constraints together.
 Check other Doctrine dependencies when upgrading DBAL.
 
-For the unpublished checkout, follow the [local installation instructions](index.md#install).
-After publication, add the new package to a consumer with:
-
-```sh
-composer require 'solophp/repository:^1.0' --with-all-dependencies
-```
+Add the new package using the [installation instructions](index.md#install).
+If Composer reports a conflict with an existing dependency, review its constraint
+and use `--with-all-dependencies` when updating the related packages.
 
 Keep `solophp/base-repository:^3.0` installed while migrating its callers. The
 namespaces are independent; the new package neither `replace`s nor `provide`s
@@ -44,8 +41,6 @@ composer remove solophp/base-repository
 
 Change imports for new code to `Solo\Repository`. This is **not** a namespace-only
 migration from v3: construction and behavior also change as described below.
-If you evaluated the unpublished v4 prototype, its mapped API now lives under
-`Solo\Repository` in this separate package, with its first version numbered 1.0.
 
 The integration matrix covers MySQL 8.4 and PostgreSQL 17, alongside SQLite.
 Other DBAL platforms are outside that matrix. See the
