@@ -178,6 +178,61 @@ final class RepositoryTest extends TestCase
         }
     }
 
+    public function testWrittenValuesMustFitTheColumnTypeBeforeSql(): void
+    {
+        $id = $this->repository->insertGetId(['sku' => 'kept', 'amount' => '1.25', 'active' => true]);
+        $this->log->sql = [];
+        $writes = [
+            [
+                'Field "id" requires an integer or a canonical decimal string.',
+                fn () => $this->repository->insert(['id' => '5x', 'sku' => 'id']),
+            ],
+            [
+                'Field "active" requires a boolean, 0 or 1.',
+                fn () => $this->repository->insertGetId(['sku' => 'flag', 'active' => 'false']),
+            ],
+            [
+                'Field "sku" requires a string, an integer or a Stringable.',
+                fn () => $this->repository->insertMany([['sku' => 'first'], ['sku' => 1.5]]),
+            ],
+            [
+                'Field "amount" requires a number or a numeric string.',
+                fn () => $this->repository->update($id, ['amount' => 'abc']),
+            ],
+            [
+                'Field "active" requires a boolean, 0 or 1.',
+                fn () => $this->repository->updateBy(['sku' => 'kept'], ['active' => 2]),
+            ],
+        ];
+        foreach ($writes as [$message, $write]) {
+            try {
+                $write();
+                self::fail('Expected a value the driver would coerce to be rejected.');
+            } catch (InvalidArgumentException $exception) {
+                self::assertSame($message, $exception->getMessage());
+            }
+        }
+
+        self::assertSame([], $this->log->sql);
+        $item = $this->repository->read()->find($id);
+        self::assertSame(['kept', '1.25', true], [$item->sku, $item->amount, $item->active]);
+    }
+
+    public function testWrittenValuesInTheirTypeFormsAreStored(): void
+    {
+        $sku = new class implements Stringable {
+            public function __toString(): string
+            {
+                return 'stringable';
+            }
+        };
+        $id = $this->repository->insertGetId(['sku' => $sku, 'amount' => 3, 'active' => '1']);
+        self::assertSame(1, $this->repository->update($id, ['amount' => '2.75', 'active' => 0]));
+
+        $item = $this->repository->read()->find($id);
+        self::assertSame(['stringable', '2.75', false], [$item->sku, $item->amount, $item->active]);
+    }
+
     #[DataProvider('invalidIds')]
     public function testInvalidIdCannotAccidentallyUpdateAnotherRow(mixed $id): void
     {

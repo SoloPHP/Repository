@@ -14,6 +14,7 @@ use InvalidArgumentException;
 use LogicException;
 use Solo\Repository\Internal\Database;
 use Solo\Repository\Internal\Dialect;
+use Solo\Repository\Internal\FieldValue;
 use Solo\Repository\Internal\KeyType;
 use Solo\Repository\Internal\LoadPlan;
 use Solo\Repository\Internal\PredicateCompiler;
@@ -310,7 +311,10 @@ final readonly class Repository
             if (!is_string($column)) {
                 throw new InvalidArgumentException('Data must be keyed by mapped column names.');
             }
-            $this->mapping->columnType($column);
+            $type = $this->mapping->columnType($column);
+            if ($value !== null) {
+                FieldValue::assert($column, $type, $value);
+            }
             $validated[$column] = $value;
         }
         $this->db->assertParameters(count($validated));

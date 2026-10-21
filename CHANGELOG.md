@@ -12,6 +12,8 @@ Initial release of **Solo Repository** (`solophp/repository`) with the
 - Reusable `ReadQuery` with projection reads, `sum`/`min`/`max`/`avg` aggregates
   over the same criteria as `count`, and bounded integer-ID iteration.
 - `Filter::all`, `any`, `not`, and related `EXISTS` predicates.
+- Criteria values and written values are checked against the field type before
+  SQL, so a driver cannot silently turn `'12x'` into 12 or `'false'` into TRUE.
 - One translation fallback rule for reading, filtering, and sorting;
   native PATCH upserts and insert-missing `seed()` through `TranslationStore`.
 - Four relation types in `Solo\Repository\Relations`, generic over owner and

@@ -83,7 +83,7 @@ The single primary key must be present in `columns` and use one of:
 
 Methods with a separate ID argument and explicit primary keys in insert data normalize that ID before SQL. Integer strings must match `0` or an optionally negative decimal integer without leading zeros: `12` and `-12` are valid; `01`, `+1`, `-0`, `1.5`, whitespace and `12x` are invalid. `integer`/`smallint` IDs outside the PHP integer range are rejected. `bigint` conversion follows DBAL and may return a string outside that range. Database column ranges and UUID syntax remain database/type concerns.
 
-Ordinary criteria values use DBAL conversion, not this separate ID normalization. For example, application input supplied to `findBy(['id' => $value])` is not validated like the argument of `find($value)`.
+Criteria values of integer fields follow the same rule without being converted: `findBy(['id' => '12x'])` throws instead of matching 12. See [Criteria and Filter](#criteria-and-filter) for the other field types.
 
 `softDeleteColumn`, when configured, must be a base column using `datetime`, `datetime_immutable`, `datetimetz` or `datetimetz_immutable`. The physical column must allow NULL. Translated fields must not overlap with base columns. A `BelongsTo` owner FK must already be a base column; target-side relation metadata is checked when the relation is resolved.
 
@@ -163,6 +163,8 @@ An array combines its entries with AND. A bare field name means equality:
 ```
 
 Supported operators are `=`, `!=`, `>`, `>=`, `<`, `<=`, `IN`, `NOT IN`, `LIKE`, `NOT LIKE`. Operator spelling is case-insensitive. `= null` and `!= null` become `IS NULL` and `IS NOT NULL`. NULL with other operators is rejected. Arrays require explicit `IN`/`NOT IN`; their elements cannot be NULL or arrays. `IN []` is false, `NOT IN []` is true, and an empty criteria array is true.
+
+Every value, including each IN element, must fit the field type before SQL; a driver would otherwise coerce it silently, turning `'12x'` into 12 or, on MySQL, `'false'` into TRUE. Integer fields take `int` or a canonical decimal string, decimal and float fields take numbers or numeric strings, boolean fields take `bool`, `0`, `1`, `'0'` or `'1'`, and string, text and GUID fields take strings, integers or `Stringable` objects. A LIKE pattern therefore needs a string field. DBAL converts and checks other types, such as dates.
 
 ```php
 Filter::all(array|Filter ...$parts): Filter;
@@ -345,7 +347,7 @@ Repository::purgeBy(array|Filter $criteria): int;
 Repository::lockForUpdate(int|string|array $ids): void;     // list<int|string> when an array
 ```
 
-Data/patch arrays use base column names. Translated fields and unknown columns are rejected. Writes do not hydrate or reread models. Every method returning `int`, except `insertGetId()`, returns affected rows. The database/driver controls affected-row semantics: zero from UPDATE does not prove that the row is absent.
+Data/patch arrays use base column names. Translated fields and unknown columns are rejected. Written values follow the type rules of criteria values (see [Criteria and Filter](#criteria-and-filter)) before any SQL, so `update($id, ['quantity' => 'abc'])` throws instead of storing 0; NULL passes through to the database. Writes do not hydrate or reread models. Every method returning `int`, except `insertGetId()`, returns affected rows. The database/driver controls affected-row semantics: zero from UPDATE does not prove that the row is absent.
 
 Both `insert()` and `insertGetId()` perform an INSERT; do not call both for the same record. `generatedId: false` requires an explicit PK. With generated IDs, omit the PK to use the database identity, or supply one permitted by the schema. Empty insert data uses the database's empty identity INSERT syntax/defaults. `insertGetId()` returns the explicit normalized ID or retrieves a generated ID using PostgreSQL `RETURNING` or MySQL/SQLite driver support. No generated-ID strategy is promised for other platforms or database-generated UUIDs.
 

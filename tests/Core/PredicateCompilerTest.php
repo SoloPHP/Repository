@@ -194,6 +194,54 @@ final class PredicateCompilerTest extends TestCase
         yield 'invalid field in empty in' => [['unknown IN' => []]];
     }
 
+    #[DataProvider('mistypedValues')]
+    public function testValuesMustFitTheFieldTypeBeforeBinding(array|Filter $criteria, string $message): void
+    {
+        $builder = $this->builder();
+
+        try {
+            $this->compiler($builder)->compile($criteria);
+            self::fail('Expected a value the driver would coerce to be rejected.');
+        } catch (InvalidArgumentException $exception) {
+            self::assertSame($message, $exception->getMessage());
+            self::assertSame([], $builder->getParameters());
+        }
+    }
+
+    public static function mistypedValues(): iterable
+    {
+        $integer = 'Field "id" requires an integer or a canonical decimal string.';
+        yield 'letters' => [['id' => 'abc'], $integer];
+        yield 'numeric prefix' => [['id' => '1abc'], $integer];
+        yield 'leading zero' => [['id' => '01'], $integer];
+        yield 'whitespace' => [['id' => ' 1'], $integer];
+        yield 'float' => [['id >' => 1.5], $integer];
+        yield 'boolean' => [['id' => true], $integer];
+        yield 'outside the PHP integer range' => [['id' => '9223372036854775808'], $integer];
+        yield 'in element' => [['id IN' => [1, '2x']], $integer];
+        yield 'like pattern' => [['id LIKE' => '1%'], $integer];
+        yield 'negated group' => [Filter::not(['id' => 'x']), $integer];
+        $boolean = 'Field "enabled" requires a boolean, 0 or 1.';
+        yield 'boolean word' => [['enabled' => 'false'], $boolean];
+        yield 'boolean two' => [['enabled' => 2], $boolean];
+        $number = 'Field "price" requires a number or a numeric string.';
+        yield 'decimal letters' => [['price >=' => 'cheap'], $number];
+        yield 'decimal infinity' => [['price <' => INF], $number];
+        yield 'decimal boolean' => [['price' => false], $number];
+        $string = 'Field "name" requires a string, an integer or a Stringable.';
+        yield 'string boolean' => [['name' => true], $string];
+        yield 'string float' => [['name' => 1.5], $string];
+    }
+
+    public function testValuesInTheirTypeFormsAreAccepted(): void
+    {
+        self::assertSame([1, 4], $this->selectIds(['id IN' => [1, '4', '-7'], 'enabled' => '1']));
+        self::assertSame([2, 5], $this->selectIds(['enabled' => 0]));
+        self::assertSame([1, 2, 4], $this->selectIds(['price >=' => '10.50']));
+        self::assertSame([5], $this->selectIds(['price <' => 6]));
+        self::assertSame([5], $this->selectIds(['note' => 0]));
+    }
+
     #[DataProvider('constantCriteria')]
     public function testConstantsNormalizeForWriteGuardsWithoutUnusedParameters(
         array|Filter $criteria,

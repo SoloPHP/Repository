@@ -123,7 +123,7 @@ Before `hydrate` runs, DBAL converts every selected mapped field: `decimal` rema
 
 For application-assigned IDs, replace `$autoIncrement = false` with `generatedId: false` and supply the ID on every insert. Use `Types::GUID` or `Types::STRING` for UUIDs as appropriate for the schema; DB-generated UUIDs are outside the generated-ID contract. Integer IDs accept integers or canonical decimal strings, not arbitrary text, leading-zero strings or overflowing smallint/integer PHP values. String IDs such as `'01'` retain their spelling. An explicit identity ID still has to be legal in the database schema; Solo Repository does not override `GENERATED ALWAYS` or repair sequences after manual inserts.
 
-That ID validation applies to separate ID arguments and explicit primary keys in insert data. General criteria such as `findBy(['id' => $input])` use the mapped DBAL conversion instead; validate external filter input in the application.
+That ID validation applies to separate ID arguments and explicit primary keys in insert data. Criteria values are checked against their field type as well: `findBy(['id' => $input])` throws for input such as `'12x'` instead of letting the driver turn it into 12. Validate external filter input in the application when it needs its own error response.
 
 ## 3. Move reads to an immutable ReadQuery
 

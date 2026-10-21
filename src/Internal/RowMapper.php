@@ -123,7 +123,7 @@ final readonly class RowMapper
     public function id(int|string $id): int|string
     {
         if ($this->keyType === KeyType::Integer) {
-            if (is_string($id) && preg_match('/\A(?:0|-?[1-9][0-9]*)\z/', $id) !== 1) {
+            if (is_string($id) && !FieldValue::isCanonicalInteger($id)) {
                 throw new InvalidArgumentException('An integer primary key requires a canonical decimal ID.');
             }
 

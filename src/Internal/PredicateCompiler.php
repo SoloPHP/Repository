@@ -80,7 +80,7 @@ final class PredicateCompiler
 
             [$field, $operator] = self::parseCondition($key);
             $type = $this->fields === null ? $mapping->columnType($field) : $mapping->fieldType($field);
-            self::validateValue($operator, $value);
+            self::validateValue($field, $type, $operator, $value);
             $parts[] = $value === [] ? $operator === 'NOT IN' : new Condition($field, $operator, $value, $type);
         }
 
@@ -143,7 +143,7 @@ final class PredicateCompiler
         return [$matches[1], $operator];
     }
 
-    private static function validateValue(string $operator, mixed $value): void
+    private static function validateValue(string $field, string $type, string $operator, mixed $value): void
     {
         if ($operator === 'IN' || $operator === 'NOT IN') {
             if (!is_array($value)) {
@@ -154,6 +154,7 @@ final class PredicateCompiler
                 if ($element === null || is_array($element)) {
                     throw new InvalidArgumentException('IN values cannot contain NULL or nested arrays.');
                 }
+                FieldValue::assert($field, $type, $element);
             }
 
             return;
@@ -163,9 +164,15 @@ final class PredicateCompiler
             throw new InvalidArgumentException('Array values require an explicit IN or NOT IN operator.');
         }
 
-        if ($value === null && $operator !== '=' && $operator !== '!=') {
-            throw new InvalidArgumentException('NULL is only supported with = or !=.');
+        if ($value === null) {
+            if ($operator !== '=' && $operator !== '!=') {
+                throw new InvalidArgumentException('NULL is only supported with = or !=.');
+            }
+
+            return;
         }
+
+        FieldValue::assert($field, $type, $value);
     }
 
     private static function countValues(Condition|Group|Exists $predicate): int
