@@ -137,9 +137,10 @@ final class RepositoryDatabaseTest extends DatabaseTestCase
             $rows[] = ['sku' => 'item-' . $index, 'active' => true];
         }
         $rows[] = ['sku' => 'item-0', 'active' => false];
+        $repository = new Repository($this->connection, $this->mapping(), parameterLimit: 900);
 
         try {
-            $this->repository->insertMany($rows, batchSize: 1000);
+            $repository->insertMany($rows, batchSize: 1000);
             self::fail('Expected a unique violation in the second SQL chunk.');
         } catch (UniqueConstraintViolationException) {
             $inserts = array_values(array_filter(
@@ -176,6 +177,47 @@ final class RepositoryDatabaseTest extends DatabaseTestCase
             ['outer-before', 'outer-after'],
             array_column($this->repository->read()->rows(['sku'], orderBy: ['id' => 'ASC']), 'sku'),
         );
+    }
+
+    public function testLockForUpdateHoldsRowsUntilTheTransactionEnds(): void
+    {
+        $id = $this->repository->insertGetId(['sku' => 'locked']);
+        $other = $this->otherConnection();
+        $probe = 'SELECT id FROM repo_repository_items WHERE id = ? FOR UPDATE NOWAIT';
+
+        $this->connection->beginTransaction();
+        $this->repository->lockForUpdate([$id, (string) $id]);
+        try {
+            $other->fetchOne($probe, [$id]);
+            self::fail('A second session must not lock a row held by the first.');
+        } catch (\Doctrine\DBAL\Exception) {
+            self::assertTrue($this->connection->isTransactionActive());
+        } finally {
+            $this->connection->rollBack();
+        }
+
+        self::assertSame($id, (int) $other->fetchOne($probe, [$id]));
+    }
+
+    public function testAggregatesAreTypedByTheFieldOnTheServer(): void
+    {
+        $repository = new Repository($this->connection, $this->mapping(true));
+        $repository->insertMany([
+            ['sku' => 'a', 'amount' => '12.30', 'occurred_at' => new DateTimeImmutable('2026-01-02 03:04:05')],
+            ['sku' => 'b', 'amount' => '0.70', 'occurred_at' => new DateTimeImmutable('2026-03-04 05:06:07')],
+            ['sku' => 'c', 'amount' => '5.00', 'occurred_at' => null],
+        ]);
+        $repository->deleteBy(['sku' => 'c']);
+        $query = $repository->read();
+
+        self::assertSame('13.00', $query->sum('amount'));
+        self::assertSame('0.70', $query->min('amount'));
+        self::assertSame(6.5, $query->avg('amount'));
+        self::assertSame('2026-03-04 05:06:07', $query->max('occurred_at')?->format('Y-m-d H:i:s'));
+        self::assertSame('18.00', $query->withVisibility(Visibility::All)->sum('amount'));
+        self::assertSame('0', $query->sum('amount', ['sku' => 'missing']));
+        self::assertNull($query->max('occurred_at', ['sku' => 'missing']));
+        self::assertNull($query->avg('amount', ['sku' => 'missing']));
     }
 
     private function mapping(bool $softDelete = false): Mapping

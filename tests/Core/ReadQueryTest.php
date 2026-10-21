@@ -21,6 +21,7 @@ use RuntimeException;
 use Solo\Repository\Filter;
 use Solo\Repository\Mapping;
 use Solo\Repository\ReadQuery;
+use Solo\Repository\Repository;
 use Solo\Repository\Visibility;
 use Stringable;
 use WeakReference;
@@ -75,7 +76,7 @@ final class ReadQueryTest extends TestCase
 
     public function testFindAndFindOneHaveOneLimitedSelectAndOnlyMappedColumns(): void
     {
-        $query = new ReadQuery($this->connection, $this->mapping());
+        $query = $this->query($this->mapping());
         self::assertSame(0, $query->find('0')->id);
         self::assertCount(1, $this->logger->queries);
         self::assertStringContainsString('LIMIT 1', $this->logger->queries[0]);
@@ -92,7 +93,7 @@ final class ReadQueryTest extends TestCase
 
     public function testVisibilityBranchesRemainIndependentAndReusable(): void
     {
-        $active = new ReadQuery($this->connection, $this->mapping());
+        $active = $this->query($this->mapping());
         $all = $active->withVisibility(Visibility::All);
         $deleted = $all->withVisibility(Visibility::Deleted);
 
@@ -110,7 +111,7 @@ final class ReadQueryTest extends TestCase
         $mapping = $this->mapping(static function (): object {
             throw new RuntimeException('Projection must not hydrate a model.');
         });
-        $query = new ReadQuery($this->connection, $mapping);
+        $query = $this->query($mapping);
         $rows = $query->rows(['id', 'enabled', 'price', 'created_at'], ['id' => 20]);
 
         self::assertCount(1, $rows);
@@ -127,7 +128,7 @@ final class ReadQueryTest extends TestCase
 
     public function testHydrationReceivesConvertedValues(): void
     {
-        $item = (new ReadQuery($this->connection, $this->mapping()))->find(-7);
+        $item = $this->query($this->mapping())->find(-7);
 
         self::assertSame(-7, $item->id);
         self::assertTrue($item->enabled);
@@ -139,7 +140,7 @@ final class ReadQueryTest extends TestCase
 
     public function testSoftDeleteIsOutsideOrGroupsAndEmptyInIsFalse(): void
     {
-        $query = new ReadQuery($this->connection, $this->mapping());
+        $query = $this->query($this->mapping());
         $criteria = Filter::any(['id' => 11], ['id' => 0]);
 
         self::assertSame([0], array_column($query->rows(['id'], $criteria), 'id'));
@@ -153,7 +154,7 @@ final class ReadQueryTest extends TestCase
         $mapping = $this->mapping(static function (): object {
             throw new RuntimeException('Scalar reads must not hydrate.');
         });
-        $query = new ReadQuery($this->connection, $mapping);
+        $query = $this->query($mapping);
 
         self::assertTrue($query->exists(['enabled' => true]));
         self::assertCount(1, $this->logger->queries);
@@ -169,7 +170,7 @@ final class ReadQueryTest extends TestCase
 
     public function testOrderAndPaginationHaveStableExplicitSemantics(): void
     {
-        $query = new ReadQuery($this->connection, $this->mapping());
+        $query = $this->query($this->mapping());
 
         self::assertSame([20, 3], array_column($query->findBy([], ['id' => 'desc'], 2, 1), 'id'));
         self::assertCount(1, $this->logger->queries);
@@ -178,7 +179,7 @@ final class ReadQueryTest extends TestCase
 
     public function testZeroLimitReturnsWithoutSql(): void
     {
-        $query = new ReadQuery($this->connection, $this->mapping());
+        $query = $this->query($this->mapping());
 
         self::assertSame([], $query->findBy(['enabled' => true], ['id' => 'ASC'], 0));
         self::assertSame([], $query->rows(['id'], limit: 0));
@@ -188,7 +189,7 @@ final class ReadQueryTest extends TestCase
     #[DataProvider('invalidRequests')]
     public function testInvalidReadOptionsFailBeforeSql(string $method, array $arguments): void
     {
-        $query = new ReadQuery($this->connection, $this->mapping());
+        $query = $this->query($this->mapping());
         try {
             $query->{$method}(...$arguments);
             self::fail('Expected invalid read options to be rejected.');
@@ -222,7 +223,7 @@ final class ReadQueryTest extends TestCase
 
     public function testDeletedVisibilityRequiresSoftDeleteButAllRemainsValid(): void
     {
-        $query = new ReadQuery($this->connection, $this->mapping(softDelete: false));
+        $query = $this->query($this->mapping(softDelete: false));
         self::assertSame(6, $query->count());
         self::assertSame(6, $query->withVisibility(Visibility::All)->count());
 
@@ -242,7 +243,7 @@ final class ReadQueryTest extends TestCase
                 return $this->name;
             }
         });
-        $query = new ReadQuery($this->connection, $mapping);
+        $query = $this->query($mapping);
         $iterable = $query->iterateById(Filter::any(['enabled' => true], ['id' => 20]), 2);
         self::assertSame([], $this->logger->queries);
 
@@ -263,7 +264,7 @@ final class ReadQueryTest extends TestCase
 
     public function testKeysetHonorsVisibilityAndExactBatchBoundary(): void
     {
-        $query = new ReadQuery($this->connection, $this->mapping());
+        $query = $this->query($this->mapping());
         $items = iterator_to_array($query->withVisibility(Visibility::All)->iterateById(batchSize: 2), false);
 
         self::assertSame([-7, 0, 3, 11, 20, 80], array_column($items, 'id'));
@@ -272,7 +273,7 @@ final class ReadQueryTest extends TestCase
 
     public function testKeysetStopsAfterFirstBatchWhenConsumerStops(): void
     {
-        $query = new ReadQuery($this->connection, $this->mapping());
+        $query = $this->query($this->mapping());
         foreach ($query->iterateById(batchSize: 2) as $item) {
             self::assertSame(-7, $item->id);
             break;
@@ -284,7 +285,7 @@ final class ReadQueryTest extends TestCase
 
     public function testKeysetDoesNotRetainModelsFromCompletedBatches(): void
     {
-        $query = new ReadQuery($this->connection, $this->mapping(), Visibility::All);
+        $query = $this->query($this->mapping())->withVisibility(Visibility::All);
         $batchReferences = [];
         $processed = 0;
 
@@ -316,7 +317,7 @@ final class ReadQueryTest extends TestCase
             primaryKey: 'name',
             generatedId: false,
         );
-        $query = new ReadQuery($this->connection, $mapping);
+        $query = $this->query($mapping);
 
         $this->expectException(InvalidArgumentException::class);
         $query->iterateById();
@@ -342,7 +343,7 @@ final class ReadQueryTest extends TestCase
             },
         );
 
-        foreach ((new ReadQuery($connection, $mapping))->iterateById(batchSize: 2) as $item) {
+        foreach ($this->query($mapping, $connection)->iterateById(batchSize: 2) as $item) {
             self::assertSame(1, $item->id);
             break;
         }
@@ -353,7 +354,7 @@ final class ReadQueryTest extends TestCase
         $driverResult = $this->createMock(DriverResult::class);
         $driverResult->method('fetchAllAssociative')->willThrowException(new RuntimeException('Fetch failed.'));
         $driverResult->expects(self::once())->method('free');
-        $query = new ReadQuery($this->resultConnection($driverResult), $this->mapping());
+        $query = $this->query($this->mapping(), $this->resultConnection($driverResult));
 
         $this->expectException(RuntimeException::class);
         $this->expectExceptionMessage('Fetch failed.');
@@ -375,6 +376,11 @@ final class ReadQueryTest extends TestCase
             hydrate: $hydrate ?? static fn(array $row): object => (object) $row,
             softDeleteColumn: $softDelete ? 'deleted_at' : null,
         );
+    }
+
+    private function query(Mapping $mapping, ?Connection $connection = null): ReadQuery
+    {
+        return (new Repository($connection ?? $this->connection, $mapping, parameterLimit: 900))->read();
     }
 
     private function resultConnection(DriverResult $driverResult): Connection

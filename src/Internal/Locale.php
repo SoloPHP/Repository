@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Solo\Repository\Internal;
 
 use InvalidArgumentException;
+use Solo\Repository\Mapping;
 
 /** @internal */
 final readonly class Locale
@@ -18,5 +19,17 @@ final readonly class Locale
         }
 
         $this->fallback = $fallback === $locale ? null : $fallback;
+    }
+
+    /**
+     * The inherited locale, otherwise the default locale of a translated mapping.
+     *
+     * @param Mapping<object> $mapping
+     */
+    public static function effective(?self $inherited, Mapping $mapping): ?self
+    {
+        return $inherited ?? ($mapping->translations === null
+            ? null
+            : new self($mapping->translations->defaultLocale));
     }
 }

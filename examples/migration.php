@@ -85,15 +85,15 @@ foreach ($schema as $sql) {
     $db->executeStatement($sql);
 }
 
-$categories = new Repository($db, new Mapping(
+$categoryMapping = new Mapping(
     table: 'categories',
     columns: ['id' => Types::INTEGER, 'deleted_at' => Types::DATETIME_IMMUTABLE],
     hydrate: static fn(array $row): object => (object) $row,
     generatedId: false,
     softDeleteColumn: 'deleted_at',
     translations: new Translations('category_translations', 'category_id', ['name' => Types::STRING], 'en'),
-));
-$tags = new Repository($db, new Mapping(
+);
+$tagMapping = new Mapping(
     table: 'tags',
     columns: [
         'id' => Types::INTEGER,
@@ -105,7 +105,9 @@ $tags = new Repository($db, new Mapping(
     generatedId: false,
     softDeleteColumn: 'deleted_at',
     translations: new Translations('tag_translations', 'tag_id', ['name' => Types::STRING], 'en'),
-));
+);
+$categories = new Repository($db, $categoryMapping);
+$tags = new Repository($db, $tagMapping);
 $products = new Repository($db, new Mapping(
     table: 'products',
     columns: [
@@ -133,7 +135,7 @@ $products = new Repository($db, new Mapping(
     ),
     relations: [
         'category' => new BelongsTo(
-            static fn(): Repository => $categories,
+            static fn(): Mapping => $categoryMapping,
             'category_id',
             static function (Product $product, ?object $category): Product {
                 $product->category = $category;
@@ -141,7 +143,7 @@ $products = new Repository($db, new Mapping(
             },
         ),
         'tags' => new BelongsToMany(
-            static fn(): Repository => $tags,
+            static fn(): Mapping => $tagMapping,
             'product_tags',
             'product_id',
             'tag_id',

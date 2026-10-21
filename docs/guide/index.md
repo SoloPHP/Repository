@@ -8,7 +8,7 @@ Models can be mutable or immutable.
 ## Install
 
 PHP 8.3+, Doctrine DBAL ^4.3, and the matching PDO driver are required. The test
-matrix covers SQLite, MySQL 8.4, and PostgreSQL 17.
+matrix covers SQLite, MySQL 8.4, MariaDB 12.3, and PostgreSQL 17.
 
 Install from the GitHub repository:
 

@@ -24,10 +24,10 @@ use WeakReference;
 final class RelationsDatabaseTest extends DatabaseTestCase
 {
     private Repository $items;
-    private Repository $categories;
-    private Repository $profiles;
-    private Repository $notes;
-    private Repository $tags;
+    private Mapping $categories;
+    private Mapping $profiles;
+    private Mapping $notes;
+    private Mapping $tags;
 
     protected function setUp(): void
     {
@@ -69,6 +69,7 @@ final class RelationsDatabaseTest extends DatabaseTestCase
 
         self::assertCount(4, $this->log->selects());
         self::assertSame([1, 2], self::ids($items));
+        self::assertSame($items[0]->relation('category'), $items[1]->relation('category'));
         self::assertSame([102, 101], self::ids($items[0]->relation('tags')));
         self::assertSame([102], self::ids($items[1]->relation('tags')));
         self::assertSame('Zulu', $items[0]->relation('tags')[1]->value('name'));
@@ -368,6 +369,33 @@ final class RelationsDatabaseTest extends DatabaseTestCase
         ));
     }
 
+    public function testDefaultParameterLimitIsTheServerMaximum(): void
+    {
+        $items = new Repository($this->connection, new Mapping(
+            'repo_rel_items',
+            ['id' => Types::INTEGER],
+            self::model(...),
+            generatedId: false,
+        ));
+        $this->log->reset();
+
+        self::assertSame([['id' => 1], ['id' => 2]], $items->read()->rows(
+            ['id'],
+            ['id IN' => range(1, 65535)],
+            ['id' => 'ASC'],
+            2,
+        ));
+        self::assertCount(65535, $this->log->selects()[0]['params']);
+
+        $this->log->reset();
+        try {
+            $items->read()->rows(['id'], ['id IN' => range(1, 65536)]);
+            self::fail('The default budget must stop at the server maximum.');
+        } catch (\InvalidArgumentException) {
+            self::assertSame([], $this->log->queries);
+        }
+    }
+
     private function createFixtureSchema(): void
     {
         $schema = new Schema();
@@ -466,31 +494,32 @@ final class RelationsDatabaseTest extends DatabaseTestCase
 
     private function createRepositories(): void
     {
-        $parents = new Repository($this->connection, $this->categoryMapping(defaultLocale: 'fr'));
-        $this->categories = new Repository($this->connection, $this->categoryMapping([
-            'parent' => new BelongsTo(static fn(): Repository => $parents, 'parent_id', self::assign('parent')),
-        ], 'uk'));
-        $this->profiles = new Repository($this->connection, new Mapping(
+        $parents = $this->categoryMapping(defaultLocale: 'fr');
+        $this->categories = $this->categoryMapping([
+            'parent' => new BelongsTo(static fn(): Mapping => $parents, 'parent_id', self::assign('parent')),
+        ], 'uk');
+        $this->profiles = new Mapping(
             'repo_rel_profiles',
             ['id' => Types::INTEGER, 'item_id' => Types::INTEGER, 'label' => Types::STRING],
             self::model(...),
             generatedId: false,
-        ));
-        $this->notes = new Repository($this->connection, new Mapping(
+        );
+        $this->notes = new Mapping(
             'repo_rel_notes',
             array_replace($this->noteTypes(), ['deleted_at' => Types::DATETIME_IMMUTABLE]),
             self::model(...),
             generatedId: false,
             softDeleteColumn: 'deleted_at',
-        ));
-        $this->tags = new Repository($this->connection, new Mapping(
+        );
+        $this->tags = new Mapping(
             'repo_rel_tags',
             array_replace($this->tagTypes(), ['deleted_at' => Types::DATETIME_IMMUTABLE]),
             self::model(...),
             generatedId: false,
             softDeleteColumn: 'deleted_at',
             translations: new Translations('repo_rel_tag_translations', 'tag_id', ['name' => Types::STRING], 'en'),
-        ));
+        );
+        // A small explicit budget exercises statement splitting with modest fixtures.
         $this->items = new Repository($this->connection, new Mapping(
             'repo_rel_items',
             array_replace($this->itemTypes(), ['deleted_at' => Types::DATETIME_IMMUTABLE]),
@@ -500,21 +529,21 @@ final class RelationsDatabaseTest extends DatabaseTestCase
             translations: new Translations('repo_rel_item_translations', 'item_id', ['name' => Types::STRING], 'en'),
             relations: [
                 'category' => new BelongsTo(
-                    fn(): Repository => $this->categories,
+                    fn(): Mapping => $this->categories,
                     'category_id',
                     self::assign('category'),
                 ),
-                'profile' => new HasOne(fn(): Repository => $this->profiles, 'item_id', self::assign('profile')),
-                'notes' => new HasMany(fn(): Repository => $this->notes, 'item_id', self::assign('notes')),
+                'profile' => new HasOne(fn(): Mapping => $this->profiles, 'item_id', self::assign('profile')),
+                'notes' => new HasMany(fn(): Mapping => $this->notes, 'item_id', self::assign('notes')),
                 'tags' => new BelongsToMany(
-                    fn(): Repository => $this->tags,
+                    fn(): Mapping => $this->tags,
                     'repo_rel_item_tags',
                     'item_id',
                     'tag_id',
                     self::assign('tags'),
                 ),
             ],
-        ));
+        ), parameterLimit: 900);
     }
 
     private function categoryMapping(array $relations = [], string $defaultLocale = 'en'): Mapping
@@ -561,25 +590,25 @@ final class RelationsDatabaseTest extends DatabaseTestCase
             }
         }
         $this->createSchema($schema);
-        $targets = new Repository($this->connection, new Mapping(
+        $targets = new Mapping(
             $names['targets'],
             ['id' => $type],
             self::model(...),
             generatedId: false,
-        ));
+        );
         return new Repository($this->connection, new Mapping(
             $names['owners'],
             ['id' => $type],
             self::model(...),
             generatedId: false,
             relations: ['targets' => new BelongsToMany(
-                static fn(): Repository => $targets,
+                static fn(): Mapping => $targets,
                 $names['links'],
                 'owner_id',
                 'target_id',
                 self::assign('targets'),
             )],
-        ));
+        ), parameterLimit: 900);
     }
 
     /** @param array<string, string> $columns @param list<list<mixed>> $rows */

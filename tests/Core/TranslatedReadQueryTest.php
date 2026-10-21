@@ -99,7 +99,7 @@ final class TranslatedReadQueryTest extends TestCase
                 'description' => $description,
             ]);
         }
-        $this->repository = new Repository($this->connection, $this->mapping());
+        $this->repository = new Repository($this->connection, $this->mapping(), parameterLimit: 900);
         $this->resetLog();
     }
 

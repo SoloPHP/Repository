@@ -42,9 +42,9 @@ composer remove solophp/base-repository
 Change imports for new code to `Solo\Repository`. This is **not** a namespace-only
 migration from v3: construction and behavior also change as described below.
 
-The integration matrix covers MySQL 8.4 and PostgreSQL 17, alongside SQLite.
+The integration matrix covers MySQL 8.4, MariaDB 12.3 and PostgreSQL 17, alongside SQLite.
 Other DBAL platforms are outside that matrix. See the
-[database test instructions](details.md#проверка-на-mysql-и-postgresql).
+[database test instructions](details.md#проверка-на-mysql-mariadb-и-postgresql).
 
 ## 2. Replace inheritance with composition
 
@@ -123,7 +123,7 @@ Before `hydrate` runs, DBAL converts every selected mapped field: `decimal` rema
 
 For application-assigned IDs, replace `$autoIncrement = false` with `generatedId: false` and supply the ID on every insert. Use `Types::GUID` or `Types::STRING` for UUIDs as appropriate for the schema; DB-generated UUIDs are outside the generated-ID contract. Integer IDs accept integers or canonical decimal strings, not arbitrary text, leading-zero strings or overflowing smallint/integer PHP values. String IDs such as `'01'` retain their spelling. An explicit identity ID still has to be legal in the database schema; Solo Repository does not override `GENERATED ALWAYS` or repair sequences after manual inserts.
 
-That ID validation applies to separate ID arguments and explicit primary keys in insert data. General criteria such as `findBy(['id' => $input])` use the mapped DBAL conversion instead; validate external filter input in the application.
+That ID validation applies to separate ID arguments and explicit primary keys in insert data. Criteria values are checked against their field type as well: `findBy(['id' => $input])` throws for input such as `'12x'` instead of letting the driver turn it into 12. Validate external filter input in the application when it needs its own error response.
 
 ## 3. Move reads to an immutable ReadQuery
 
@@ -194,7 +194,7 @@ Projected values are still converted through DBAL. `rows()` rejects nonempty eag
 
 ## 4. Rewrite criteria explicitly
 
-The array shorthand is still an AND of fields, but operators now belong in the **key**. Old nested operator arrays and automatic IN lists are rejected.
+The array shorthand is still an AND of fields, but operators now belong in the **key**. Old nested operator arrays and automatic IN lists are rejected. Because the key now carries the operator, build keys only from fixed strings, never from request input, and map user-selected filters to fixed keys through an allowlist; see [Criteria and Filter](api.md#criteria-and-filter).
 
 | V3 criterion | Solo Repository criterion |
 |---|---|
@@ -214,7 +214,7 @@ The full operator set is `=`, `!=`, `>`, `>=`, `<`, `<=`, `IN`, `NOT IN`, `LIKE`
 
 Use `Filter::all(...)`, `Filter::any(...)` and `Filter::not(...)` for groups. `all/any` require at least one argument; `[]` itself is true. NOT follows SQL NULL logic: `Filter::not(['price >' => '10.00'])` does not include NULL prices unless you explicitly add that alternative.
 
-A statement has a conservative budget of 900 bound parameters, including translation and related-filter parameters. A large root IN filter is rejected rather than split into queries that could change OR, ordering or pagination semantics. Automatic chunking is limited to internal loading and bulk-writing operations.
+A statement has a budget of bound parameters, including translation and related-filter parameters: the platform limit by default (65,535 on PostgreSQL and MySQL/MariaDB, 32,766 on SQLite 3.32+, otherwise 900), or `parameterLimit` passed to the `Repository` constructor. A larger root IN filter is rejected rather than split into queries that could change OR, ordering or pagination semantics. Automatic chunking is limited to internal loading and bulk-writing operations; their internal key lists also stop at 5,000 keys per statement.
 
 ### Replace named scopes with application functions
 
@@ -283,7 +283,7 @@ $products->read()->findBy(Filter::related(
 | `update($id, $patch): object` | `update($id, $patch): int`, affected rows |
 | `updateBy()/delete()/deleteBy()/restore()` | Affected rows; apply Solo Repository's visibility and criteria rules |
 | `forceDelete($id)` | `purge($id)` |
-| `forceDeleteBy($criteria)` | Explicit application SQL through DBAL; no `purgeBy()` |
+| `forceDeleteBy($criteria)` | `purgeBy($criteria)`, physical regardless of visibility |
 
 `insert()` and `insertGetId()` each perform an INSERT. Choose one; do not call both for the same row. Generated IDs use the platform's supported mechanism. For MySQL generated integer keys, omit the ID instead of passing zero.
 
@@ -355,7 +355,7 @@ $deletedRows = $translations->delete($id, 'uk'); // Only this owner/locale.
 
 `save()` is one atomic native upsert and returns void. Existing omitted fields remain unchanged. On a new row, omitted translated fields are explicitly NULL, even if the database column has a DEFAULT. Values must be string or NULL; unknown/protected fields are rejected rather than silently ignored. An empty patch validates ID/locale and performs no SQL. `get()` returns NULL only when the row is missing; an existing all-NULL translation returns an array.
 
-There is no `seedTranslations()` equivalent with “insert if missing” semantics. For a **newly created owner**, save each desired locale inside the creation transaction. Do not replace repeatable v3 seeding with a blind loop of `save()`: it would overwrite existing translations. A repeatable preserve-existing seed operation belongs in application SQL with a targeted conflict policy; a get-then-save loop alone does not make that policy safe under concurrent writers.
+`seedTranslations($id, $locales, $values)` becomes `$translations->seed($id, $locales, $values)`. It inserts a row for every locale that has none and leaves existing rows unchanged, so it is safe to repeat; it returns the number of inserted rows. Unlike v3, omitted translated fields of a new row are NULL, as with `save()`, and only a conflict on the `(foreignKey, localeColumn)` pair is skipped: `INSERT IGNORE` is not used, so FK and other constraint errors still propagate. Do not replace seeding with a loop of `save()`: it would overwrite existing translations.
 
 ## 7. Replace relation definitions and setters
 
@@ -368,7 +368,7 @@ use Solo\Repository\Relations\BelongsToMany;
 // Add these entries to the relations argument of the products Mapping.
 $relations = [
     'category' => new BelongsTo(
-        repository: static fn(): Repository => $categories,
+        target: static fn(): Mapping => $categories,
         foreignKey: 'category_id',
         assign: static function (Product $product, ?object $category): Product {
             $product->category = $category;
@@ -376,7 +376,7 @@ $relations = [
         },
     ),
     'tags' => new BelongsToMany(
-        repository: static fn(): Repository => $tags,
+        target: static fn(): Mapping => $tags,
         pivotTable: 'product_tags', // V3 called this constructor argument "pivot".
         foreignPivotKey: 'product_id',
         relatedPivotKey: 'tag_id',
@@ -388,13 +388,13 @@ $relations = [
 ];
 ```
 
-Construct `$categories` and `$tags` as ordinary mapped repositories. Pass `relations: $relations` when constructing the products mapping. Keep the same `Connection` instance for every repository in the graph; a separately constructed connection with the same DSN is not sufficient. Lazy repository callbacks support cyclic configuration and are checked when the relation is resolved.
+`$categories` and `$tags` are the `Mapping` objects of the target tables; their own repositories are needed only for writing them. Pass `relations: $relations` when constructing the products mapping. Related rows are read through the products repository's connection, so a read replica or a transaction applies to the whole graph. Lazy target callbacks support cyclic configuration and are checked when the relation is resolved.
 
 `assign` must return the owner object, either the mutated object or a new immutable copy. A legacy void setter needs a wrapper that calls the setter **and returns the owner**. To-one callbacks receive an object or NULL; to-many callbacks receive a list, including an empty list. Every relation definition requires a callback, even if the current caller uses it only for filtering.
 
 `BelongsTo` uses an FK on the owner. `HasOne/HasMany` use an FK on the target; `HasOne` requires that FK to be unique. `BelongsToMany` requires UNIQUE on its pivot pair and both foreign keys. Audit compatible types and matching PK/FK collations, including translations. Alternative-key/composite-key relations, cross-connection graphs and pivot attributes are outside 1.0; model a pivot with business fields as a separate repository.
 
-Move relation-level sorting/constraints to `Load`:
+V3 relation-level ordering becomes the `orderBy` argument of `HasMany` and `BelongsToMany`; it orders every load of that collection unless a `Load` sets its own order. Move constraints to `Load`:
 
 ```php
 use Solo\Repository\Load;
@@ -471,19 +471,31 @@ The following v3 extension points have no equivalent in Solo Repository:
 | `RepositoryInterface` / subclassing `BaseRepository` | Own an instance of final `Repository`; define an application interface if needed |
 | `getConnection()` and protected `queryBuilder()/table()` | Inject `Connection` into the application component |
 | `beginTransaction()/commit()/rollBack()/withTransaction()/inTransaction()` | Use DBAL `Connection` transaction methods |
-| `lockForUpdate()/withLock()` | Application-owned, platform-specific locking on the same connection |
-| `sum()/avg()/min()/max()/aggregate()` | Explicit DBAL aggregate SQL |
+| `lockForUpdate($ids)` | `Repository::lockForUpdate($ids)` inside a transaction |
+| `withLock($key, $callback)` and `LockTimeoutException` | Application-owned advisory lock (`GET_LOCK`, `pg_advisory_lock`) on the same connection |
+| `sum()/avg()/min()/max()` | `ReadQuery::sum()/avg()/min()/max()` with the same criteria, locale and visibility |
+| `aggregate()` overrides on a joined `table()` | Explicit DBAL aggregate SQL |
 | `afterWrite()` | Explicit application invalidation/events at the intended transaction boundary |
 | `scopes()` | Application functions returning criteria |
 | Reflection/static mapper convention | Explicit `hydrate` callback in `Mapping` |
 
-For example, an application can keep a typed aggregate method backed by DBAL:
+Aggregates over one mapped table keep the criteria of the list they summarize:
+
+```php
+$query = $products->read();
+$page = $query->findBy($criteria, ['id' => 'ASC'], limit: 20);
+$total = $query->sum('price', $criteria);     // converted by the field type: a string for decimals
+$latest = $query->max('created_at', $criteria); // DateTimeImmutable|null
+```
+
+Aggregates over joined tables stay in DBAL:
 
 ```php
 $total = $db->fetchOne(
-    'SELECT SUM(price) FROM products WHERE status = ? AND deleted_at IS NULL',
-    ['active'],
-    [Types::STRING],
+    'SELECT SUM(s.stock * b.price) FROM stocks s JOIN batches b ON b.product_id = s.product_id'
+        . ' WHERE s.store_id = ? AND s.deleted_at IS NULL',
+    [$storeId],
+    [Types::INTEGER],
 );
 ```
 
@@ -504,6 +516,6 @@ Run the `examples/migration.php` smoke example, then test the consumer's actual 
 5. Verify owner selection separately from collection loading, root/target visibility and physical sync semantics.
 6. Cause a late FK/unique error after earlier writes; verify the entire intended transaction rolls back.
 7. Check query counts on a realistic catalog and memory behavior on a realistic export.
-8. Replace application locks, retry policies, aggregates and invalidation hooks explicitly before switching traffic.
+8. Replace advisory locks, retry policies and invalidation hooks explicitly before switching traffic.
 
-Use the project's [SQLite and live database suites](details.md#проверка-на-mysql-и-postgresql) for library checks. They complement consumer tests; they do not infer your domain's visibility, transaction or concurrency policies.
+Use the project's [SQLite and live database suites](details.md#проверка-на-mysql-mariadb-и-postgresql) for library checks. They complement consumer tests; they do not infer your domain's visibility, transaction or concurrency policies.

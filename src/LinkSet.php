@@ -4,10 +4,9 @@ declare(strict_types=1);
 
 namespace Solo\Repository;
 
-use Doctrine\DBAL\Connection;
-use Doctrine\DBAL\Types\Types;
 use InvalidArgumentException;
-use Solo\Repository\Internal\PredicateCompiler;
+use Solo\Repository\Internal\Database;
+use Solo\Repository\Internal\KeyType;
 use Solo\Repository\Internal\RowMapper;
 use Solo\Repository\Relations\BelongsToMany;
 
@@ -16,34 +15,47 @@ use Solo\Repository\Relations\BelongsToMany;
  */
 final readonly class LinkSet
 {
+    /** SQLite allows 500 compound SELECT terms by default (SQLITE_MAX_COMPOUND_SELECT). */
+    private const int COMPOUND_SELECT_BATCH = 450;
+
+    /** @var BelongsToMany<object, object> */
     private BelongsToMany $relation;
+
+    /** @var Mapping<object> */
     private Mapping $target;
+
+    /** @var RowMapper<object> */
     private RowMapper $ownerMapper;
+
+    /** @var RowMapper<object> */
     private RowMapper $targetMapper;
 
-    public function __construct(private Connection $connection, private Mapping $mapping, string $relation)
+    /**
+     * @internal Obtain link sets from Repository::links().
+     * @param Mapping<object> $mapping
+     */
+    public function __construct(private Database $db, private Mapping $mapping, string $relation)
     {
         $definition = $mapping->relation($relation);
         if (!$definition instanceof BelongsToMany) {
             throw new InvalidArgumentException('LinkSet requires a BelongsToMany relation.');
         }
         $this->relation = $definition;
-        $this->target = $definition->resolve($connection, $mapping)->mapping();
-        $platform = $connection->getDatabasePlatform();
-        $this->ownerMapper = new RowMapper($mapping, $platform);
-        $this->targetMapper = new RowMapper($this->target, $platform);
+        $this->target = $definition->resolve($mapping);
+        $this->ownerMapper = new RowMapper($mapping, $db);
+        $this->targetMapper = new RowMapper($this->target, $db);
     }
 
     /** @param list<int|string> $ids */
     public function attach(int|string $id, array $ids): void
     {
         $id = $this->ownerMapper->id($id);
-        $ids = $this->normalizeIds($ids);
+        $ids = $this->targetMapper->ids($ids);
         if ($ids === []) {
             return;
         }
 
-        $this->connection->transactional(function () use ($id, $ids): void {
+        $this->db->connection->transactional(function () use ($id, $ids): void {
             $id = $this->canonicalOwnerId($id);
             $ids = $this->canonicalTargetIds($ids);
             $this->insertLinks($id, array_diff_key($ids, $this->existingIds($id)));
@@ -54,26 +66,25 @@ final readonly class LinkSet
     public function detach(int|string $id, array $ids): void
     {
         $id = $this->ownerMapper->id($id);
-        $ids = $this->normalizeIds($ids);
+        $ids = $this->targetMapper->ids($ids);
         if ($ids === []) {
             return;
         }
 
-        $this->connection->transactional(fn () => $this->deleteLinks($id, $ids));
+        $this->db->connection->transactional(fn () => $this->deleteLinks($id, $ids));
     }
 
     /** @param list<int|string> $ids */
     public function sync(int|string $id, array $ids): void
     {
         $id = $this->ownerMapper->id($id);
-        $ids = $this->normalizeIds($ids);
+        $ids = $this->targetMapper->ids($ids);
 
-        $this->connection->transactional(function () use ($id, $ids): void {
+        $this->db->connection->transactional(function () use ($id, $ids): void {
             if ($ids === []) {
                 [$condition, $parameters, $types] = $this->ownerCondition($id);
-                $this->connection->executeStatement(
-                    'DELETE FROM ' . $this->quote($this->relation->pivotTable)
-                        . ' WHERE ' . $condition,
+                $this->db->connection->executeStatement(
+                    'DELETE FROM ' . $this->db->quote($this->relation->pivotTable) . ' WHERE ' . $condition,
                     $parameters,
                     $types,
                 );
@@ -88,44 +99,23 @@ final readonly class LinkSet
         });
     }
 
-    /**
-     * @param array<mixed> $ids
-     * @return array<int|string, int|string>
-     */
-    private function normalizeIds(array $ids): array
-    {
-        if (!array_is_list($ids)) {
-            throw new InvalidArgumentException('Related IDs must be a list.');
-        }
-        $normalized = [];
-        foreach ($ids as $id) {
-            if (!is_int($id) && !is_string($id)) {
-                throw new InvalidArgumentException('Related IDs must be integers or strings.');
-            }
-            $id = $this->targetMapper->id($id);
-            $normalized[(string) $id] = $id;
-        }
-
-        return $normalized;
-    }
-
-    /** @return array<int|string, int|string> */
+    /** @return array<string, int|string> */
     private function existingIds(int|string $id): array
     {
         [$condition, $parameters, $types] = $this->ownerCondition($id, 'br_link_pivot');
-        $physical = $this->qualified('br_link_pivot', $this->relation->relatedPivotKey);
-        $canonical = $this->qualified('br_link_target', $this->target->primaryKey);
-        $result = $this->connection->executeQuery(
+        $physical = $this->db->qualified('br_link_pivot', $this->relation->relatedPivotKey);
+        $canonical = $this->db->qualified('br_link_target', $this->target->primaryKey);
+        $result = $this->db->connection->executeQuery(
             'SELECT COALESCE(' . $canonical . ', ' . $physical . ')'
-                . ' FROM ' . $this->quote($this->relation->pivotTable) . ' ' . $this->quote('br_link_pivot')
-                . ' LEFT JOIN ' . $this->quote($this->target->table) . ' ' . $this->quote('br_link_target')
+                . ' FROM ' . $this->db->quote($this->relation->pivotTable) . ' ' . $this->db->quote('br_link_pivot')
+                . ' LEFT JOIN ' . $this->db->quote($this->target->table) . ' ' . $this->db->quote('br_link_target')
                 . ' ON ' . $canonical . ' = ' . $physical
                 . ' WHERE ' . $condition,
             $parameters,
             $types,
         );
         try {
-            return $this->normalizeIds($result->fetchFirstColumn());
+            return $this->targetMapper->ids($result->fetchFirstColumn());
         } finally {
             $result->free();
         }
@@ -133,48 +123,49 @@ final readonly class LinkSet
 
     private function canonicalOwnerId(int|string $id): int|string
     {
-        if (!$this->hasStringKey($this->ownerType())) {
+        if ($this->ownerMapper->keyType() !== KeyType::String) {
             return $id;
         }
-        $canonical = $this->connection->fetchOne(
-            'SELECT ' . $this->quote($this->mapping->primaryKey)
-                . ' FROM ' . $this->quote($this->mapping->table)
-                . ' WHERE ' . $this->quote($this->mapping->primaryKey) . ' = ?',
+        $canonical = $this->db->connection->fetchOne(
+            'SELECT ' . $this->db->quote($this->mapping->primaryKey)
+                . ' FROM ' . $this->db->quote($this->mapping->table)
+                . ' WHERE ' . $this->db->quote($this->mapping->primaryKey) . ' = ?',
             [$id],
             [$this->ownerType()],
         );
 
-        return $canonical === false ? $id : $this->ownerMapper->id($canonical);
+        return $canonical === false ? $id : $this->ownerMapper->rowId($canonical);
     }
 
     /**
-     * @param array<int|string, int|string> $ids
-     * @return array<int|string, int|string>
+     * @param array<string, int|string> $ids
+     * @return array<string, int|string>
      */
     private function canonicalTargetIds(array $ids): array
     {
-        if (!$this->hasStringKey($this->targetType())) {
+        if ($this->targetMapper->keyType() !== KeyType::String) {
             return $ids;
         }
 
         $canonical = [];
-        foreach (array_chunk($ids, 450) as $chunk) {
+        $size = min(self::COMPOUND_SELECT_BATCH, $this->db->parameterLimit());
+        foreach (array_chunk($ids, $size) as $chunk) {
             // The empty first branch gives PostgreSQL UUID parameters their column type.
-            $input = 'SELECT ' . $this->quote($this->target->primaryKey) . ' AS link_id FROM '
-                . $this->quote($this->target->table) . ' WHERE 1 = 0'
+            $input = 'SELECT ' . $this->db->quote($this->target->primaryKey) . ' AS link_id FROM '
+                . $this->db->quote($this->target->table) . ' WHERE 1 = 0'
                 . str_repeat(' UNION ALL SELECT ?', count($chunk));
-            $target = $this->qualified('br_link_target', $this->target->primaryKey);
-            $candidate = $this->qualified('br_link_input', 'link_id');
-            $result = $this->connection->executeQuery(
+            $target = $this->db->qualified('br_link_target', $this->target->primaryKey);
+            $candidate = $this->db->qualified('br_link_input', 'link_id');
+            $result = $this->db->connection->executeQuery(
                 'SELECT COALESCE(' . $target . ', ' . $candidate . ')'
-                    . ' FROM (' . $input . ') ' . $this->quote('br_link_input')
-                    . ' LEFT JOIN ' . $this->quote($this->target->table) . ' ' . $this->quote('br_link_target')
+                    . ' FROM (' . $input . ') ' . $this->db->quote('br_link_input')
+                    . ' LEFT JOIN ' . $this->db->quote($this->target->table) . ' ' . $this->db->quote('br_link_target')
                     . ' ON ' . $target . ' = ' . $candidate,
                 $chunk,
                 array_fill(0, count($chunk), $this->targetType()),
             );
             try {
-                $canonical += $this->normalizeIds($result->fetchFirstColumn());
+                $canonical += $this->targetMapper->ids($result->fetchFirstColumn());
             } finally {
                 $result->free();
             }
@@ -186,62 +177,60 @@ final readonly class LinkSet
     /** @return array{string, list<int|string>, list<string>} */
     private function ownerCondition(int|string $id, ?string $alias = null): array
     {
-        $foreign = $this->qualified($alias ?? $this->relation->pivotTable, $this->relation->foreignPivotKey);
+        $foreign = $this->db->qualified($alias ?? $this->relation->pivotTable, $this->relation->foreignPivotKey);
         $type = $this->ownerType();
-        if (!$this->hasStringKey($type)) {
+        if ($this->ownerMapper->keyType() !== KeyType::String) {
             return [$foreign . ' = ?', [$id], [$type]];
         }
 
         $ownerAlias = $this->relation->pivotTable === 'br_link_owner' ? 'br_link_owner_1' : 'br_link_owner';
-        $primary = $this->qualified($ownerAlias, $this->mapping->primaryKey);
-        $condition = 'EXISTS (SELECT 1 FROM ' . $this->quote($this->mapping->table) . ' ' . $this->quote($ownerAlias)
+        $primary = $this->db->qualified($ownerAlias, $this->mapping->primaryKey);
+        $condition = 'EXISTS (SELECT 1 FROM ' . $this->db->quote($this->mapping->table)
+            . ' ' . $this->db->quote($ownerAlias)
             . ' WHERE ' . $primary . ' = ' . $foreign . ' AND ' . $primary . ' = ?)';
 
         return [$condition, [$id], [$type]];
     }
 
-    /** @param array<int|string, int|string> $ids */
+    /** @param array<string, int|string> $ids */
     private function insertLinks(int|string $id, array $ids): void
     {
-        foreach (array_chunk($ids, intdiv(PredicateCompiler::MAX_PARAMETERS, 2)) as $chunk) {
+        $columns = [$this->relation->foreignPivotKey, $this->relation->relatedPivotKey];
+        $ownerType = $this->ownerType();
+        $targetType = $this->targetType();
+        foreach (array_chunk($ids, $this->db->batchSize(2)) as $chunk) {
             $values = [];
             $types = [];
             foreach ($chunk as $targetId) {
-                $values[] = $id;
-                $values[] = $targetId;
-                $types[] = $this->ownerType();
-                $types[] = $this->targetType();
+                array_push($values, $id, $targetId);
+                array_push($types, $ownerType, $targetType);
             }
-            $this->connection->executeStatement(
-                'INSERT INTO ' . $this->quote($this->relation->pivotTable)
-                    . ' (' . $this->quote($this->relation->foreignPivotKey)
-                    . ', ' . $this->quote($this->relation->relatedPivotKey) . ') VALUES '
-                    . implode(', ', array_fill(0, count($chunk), '(?, ?)')),
+            $this->db->connection->executeStatement(
+                $this->db->insertSql($this->relation->pivotTable, $columns, count($chunk)),
                 $values,
                 $types,
             );
         }
     }
 
-    /** @param array<int|string, int|string> $ids */
+    /** @param array<string, int|string> $ids */
     private function deleteLinks(int|string $id, array $ids): void
     {
         [$condition, $parameters, $types] = $this->ownerCondition($id);
-        $stringKey = $this->hasStringKey($this->targetType());
-        $size = PredicateCompiler::MAX_PARAMETERS - count($parameters);
-        foreach (array_chunk($ids, $size) as $chunk) {
-            $foreign = $this->qualified($this->relation->pivotTable, $this->relation->relatedPivotKey);
+        $stringKey = $this->targetMapper->keyType() === KeyType::String;
+        foreach (array_chunk($ids, $this->db->keyBatchSize(count($parameters))) as $chunk) {
+            $foreign = $this->db->qualified($this->relation->pivotTable, $this->relation->relatedPivotKey);
             $placeholders = implode(', ', array_fill(0, count($chunk), '?'));
             $targetCondition = $foreign . ' IN (' . $placeholders . ')';
             if ($stringKey) {
                 $alias = $this->relation->pivotTable === 'br_link_target' ? 'br_link_target_1' : 'br_link_target';
-                $primary = $this->qualified($alias, $this->target->primaryKey);
-                $target = 'SELECT 1 FROM ' . $this->quote($this->target->table) . ' ' . $this->quote($alias)
+                $primary = $this->db->qualified($alias, $this->target->primaryKey);
+                $target = 'SELECT 1 FROM ' . $this->db->quote($this->target->table) . ' ' . $this->db->quote($alias)
                     . ' WHERE ' . $primary . ' = ' . $foreign;
                 $targetCondition = 'EXISTS (' . $target . ' AND ' . $primary . ' IN (' . $placeholders . '))';
             }
-            $this->connection->executeStatement(
-                'DELETE FROM ' . $this->quote($this->relation->pivotTable)
+            $this->db->connection->executeStatement(
+                'DELETE FROM ' . $this->db->quote($this->relation->pivotTable)
                     . ' WHERE ' . $condition . ' AND ' . $targetCondition,
                 [...$parameters, ...$chunk],
                 [...$types, ...array_fill(0, count($chunk), $this->targetType())],
@@ -257,20 +246,5 @@ final readonly class LinkSet
     private function targetType(): string
     {
         return $this->target->columnType($this->target->primaryKey);
-    }
-
-    private function hasStringKey(string $type): bool
-    {
-        return in_array($type, [Types::STRING, Types::ASCII_STRING, Types::GUID], true);
-    }
-
-    private function qualified(string $alias, string $column): string
-    {
-        return $this->quote($alias) . '.' . $this->quote($column);
-    }
-
-    private function quote(string $identifier): string
-    {
-        return $this->connection->quoteIdentifier($identifier);
     }
 }

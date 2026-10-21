@@ -23,38 +23,47 @@ final readonly class LoadPlan
             throw new InvalidArgumentException('Loads must be a list of relation paths or Load objects.');
         }
 
-        $tree = [];
+        $paths = [];
         foreach ($spec as $item) {
             if (!is_string($item) && !$item instanceof Load) {
                 throw new InvalidArgumentException('Loads must contain only relation paths or Load objects.');
             }
-            $explicit = $item instanceof Load;
-            $load = $explicit ? $item : new Load($item);
-            self::addPath($tree, explode('.', $load->name), $load, $explicit);
+            $load = $item instanceof Load ? $item : new Load($item);
+            $paths[] = [explode('.', $load->name), $item instanceof Load ? $item : null];
         }
 
-        return self::fromTree($tree);
+        return self::fromPaths($paths);
     }
 
     /**
-     * @param array<string, array{load: Load, explicit: bool, children: array}> $tree
-     * @param non-empty-list<string> $segments
+     * Groups paths by their first segment. A string creates the path; a Load also sets its final edge.
+     *
+     * @param list<array{non-empty-list<string>, Load|null}> $paths [remaining segments, explicit Load]
      */
-    private static function addPath(array &$tree, array $segments, Load $load, bool $explicit): void
+    private static function fromPaths(array $paths): self
     {
-        $segment = array_shift($segments);
-        $node = $tree[$segment] ?? ['load' => new Load($segment), 'explicit' => false, 'children' => []];
-        if ($segments !== []) {
-            self::addPath($node['children'], $segments, $load, $explicit);
-        } elseif ($explicit) {
-            $local = new Load($segment, $load->criteria, $load->orderBy, $load->visibility);
-            if ($node['explicit'] && !self::sameSettings($node['load'], $local)) {
-                throw new InvalidArgumentException('Conflicting explicit settings for load path ' . $load->name);
+        $explicit = [];
+        $children = [];
+        foreach ($paths as [$segments, $load]) {
+            $segment = array_shift($segments);
+            $children[$segment] ??= [];
+            if ($segments !== []) {
+                $children[$segment][] = [$segments, $load];
+            } elseif ($load !== null) {
+                $local = new Load($segment, $load->criteria, $load->orderBy, $load->visibility);
+                if (isset($explicit[$segment]) && !self::sameSettings($explicit[$segment], $local)) {
+                    throw new InvalidArgumentException('Conflicting explicit settings for load path ' . $load->name);
+                }
+                $explicit[$segment] = $local;
             }
-            $node['load'] = $local;
-            $node['explicit'] = true;
         }
-        $tree[$segment] = $node;
+
+        $nodes = [];
+        foreach ($children as $segment => $remaining) {
+            $nodes[$segment] = new LoadNode($explicit[$segment] ?? new Load($segment), self::fromPaths($remaining));
+        }
+
+        return new self($nodes);
     }
 
     private static function sameSettings(Load $left, Load $right): bool
@@ -86,16 +95,5 @@ final readonly class LoadPlan
         }
 
         return $left === $right;
-    }
-
-    /** @param array<string, array{load: Load, explicit: bool, children: array}> $tree */
-    private static function fromTree(array $tree): self
-    {
-        $nodes = [];
-        foreach ($tree as $name => $node) {
-            $nodes[$name] = new LoadNode($node['load'], self::fromTree($node['children']));
-        }
-
-        return new self($nodes);
     }
 }

@@ -25,7 +25,7 @@ final class LinkSetTest extends TestCase
 {
     private Connection $db;
     private Mapping $mapping;
-    private Repository $tags;
+    private Mapping $tags;
     private AbstractLogger $log;
 
     protected function setUp(): void
@@ -57,12 +57,12 @@ final class LinkSetTest extends TestCase
             range(1, 1002),
         )));
         $this->db->executeStatement("UPDATE tags SET deleted_at = '2026-01-01 00:00:00' WHERE id = 2");
-        $this->tags = new Repository($this->db, new Mapping(
+        $this->tags = new Mapping(
             'tags',
             ['id' => Types::INTEGER, 'deleted_at' => Types::DATETIME_IMMUTABLE],
             static fn (array $row): object => (object) $row,
             softDeleteColumn: 'deleted_at',
-        ));
+        );
         $this->mapping = new Mapping(
             'products',
             ['id' => Types::INTEGER, 'deleted_at' => Types::DATETIME_IMMUTABLE],
@@ -80,7 +80,7 @@ final class LinkSetTest extends TestCase
 
     public function testAttachAndDetachAreIdempotentAndNormalizeIds(): void
     {
-        $links = new LinkSet($this->db, $this->mapping, 'tags');
+        $links = $this->links($this->mapping);
         $links->attach('1', [1, '1', 2]);
         $links->attach(1, [2, 3]);
         self::assertSame([1, 2, 3], $this->ids(1));
@@ -92,7 +92,7 @@ final class LinkSetTest extends TestCase
 
     public function testSyncUsesPhysicalRowsIncludingSoftDeletedOwnersAndTargets(): void
     {
-        $links = new LinkSet($this->db, $this->mapping, 'tags');
+        $links = $this->links($this->mapping);
         $links->attach(1, [1, 2]);
         $links->attach(2, [1, 2]);
         $links->sync(1, [2, 3]);
@@ -105,7 +105,7 @@ final class LinkSetTest extends TestCase
 
     public function testEmptyAttachAndDetachDoNotIssueSql(): void
     {
-        $links = new LinkSet($this->db, $this->mapping, 'tags');
+        $links = $this->links($this->mapping);
         $links->attach(1, []);
         $links->detach(1, []);
 
@@ -115,7 +115,7 @@ final class LinkSetTest extends TestCase
 
     public function testWritesAreChunkedWithinTheParameterBudget(): void
     {
-        $links = new LinkSet($this->db, $this->mapping, 'tags');
+        $links = $this->links($this->mapping);
         $links->attach(1, range(1, 1001));
         $insertQueries = array_filter(
             $this->log->queries,
@@ -135,9 +135,25 @@ final class LinkSetTest extends TestCase
         self::assertSame([], $this->ids(1));
     }
 
+    public function testPivotWritesRequireRoomForOneLinkRow(): void
+    {
+        $links = (new Repository($this->db, $this->mapping, parameterLimit: 1))->links('tags');
+        foreach ([fn () => $links->attach(1, [3]), fn () => $links->detach(1, [3])] as $write) {
+            try {
+                $write();
+                self::fail('Expected the parameter limit to reject a pivot row.');
+            } catch (InvalidArgumentException $exception) {
+                self::assertStringContainsString('parameter limit of 1', $exception->getMessage());
+            }
+        }
+
+        self::assertSame([], $this->ids(1));
+        self::assertFalse($this->db->isTransactionActive());
+    }
+
     public function testFailedLaterInsertChunkRestoresDeletedAndInsertedLinks(): void
     {
-        $links = new LinkSet($this->db, $this->mapping, 'tags');
+        $links = $this->links($this->mapping);
         $links->attach(1, [1002]);
 
         try {
@@ -151,7 +167,7 @@ final class LinkSetTest extends TestCase
 
     public function testNestedFailureRollsBackOnlyTheLinkSetOperation(): void
     {
-        $links = new LinkSet($this->db, $this->mapping, 'tags');
+        $links = $this->links($this->mapping);
         $this->db->transactional(function () use ($links): void {
             $links->attach(2, [1]);
             try {
@@ -184,7 +200,7 @@ final class LinkSetTest extends TestCase
             relations: ['tags' => $this->relation('string_links', 'owner_id', 'tag_id')],
         );
 
-        (new LinkSet($this->db, $mapping, 'tags'))->sync('owner-a', ['1', 2]);
+        $this->links($mapping)->sync('owner-a', ['1', 2]);
         self::assertSame([1, 2], array_map('intval', $this->db->fetchFirstColumn('SELECT tag_id FROM string_links')));
     }
 
@@ -287,7 +303,7 @@ final class LinkSetTest extends TestCase
     #[DataProvider('invalidIds')]
     public function testInvalidRelatedIdsAreRejectedBeforeSql(array $ids): void
     {
-        $links = new LinkSet($this->db, $this->mapping, 'tags');
+        $links = $this->links($this->mapping);
         $this->expectException(InvalidArgumentException::class);
         try {
             $links->sync(1, $ids);
@@ -313,20 +329,20 @@ final class LinkSetTest extends TestCase
             ['id' => Types::INTEGER],
             static fn (array $row): object => (object) $row,
             relations: ['tags' => new HasMany(
-                fn (): Repository => $this->tags,
+                fn (): Mapping => $this->tags,
                 'owner_id',
                 static fn (object $entity, mixed $related): object => $entity,
             )],
         );
 
         $this->expectException(InvalidArgumentException::class);
-        new LinkSet($this->db, $mapping, 'tags');
+        $this->links($mapping);
     }
 
     private function relation(string $table, string $ownerKey, string $targetKey): BelongsToMany
     {
         return new BelongsToMany(
-            fn (): Repository => $this->tags,
+            fn (): Mapping => $this->tags,
             $table,
             $ownerKey,
             $targetKey,
@@ -357,20 +373,20 @@ final class LinkSetTest extends TestCase
             'target_id' => $caseSensitiveTarget ? 'tag-a' : 'TAG-A',
         ]);
         $this->db->executeStatement("INSERT INTO case_links VALUES ('other', 'tag-c')");
-        $target = new Repository($this->db, new Mapping(
+        $target = new Mapping(
             'case_targets',
             ['id' => Types::STRING, 'deleted_at' => Types::DATETIME_IMMUTABLE],
             static fn (array $row): object => (object) $row,
             generatedId: false,
             softDeleteColumn: 'deleted_at',
-        ));
+        );
         $mapping = new Mapping(
             'case_owners',
             ['id' => Types::STRING],
             static fn (array $row): object => (object) $row,
             generatedId: false,
             relations: ['targets' => new BelongsToMany(
-                static fn (): Repository => $target,
+                static fn (): Mapping => $target,
                 'case_links',
                 'owner_id',
                 'target_id',
@@ -379,7 +395,12 @@ final class LinkSetTest extends TestCase
         );
         $this->log->queries = [];
 
-        return new LinkSet($this->db, $mapping, 'targets');
+        return $this->links($mapping, 'targets');
+    }
+
+    private function links(Mapping $mapping, string $relation = 'tags'): LinkSet
+    {
+        return (new Repository($this->db, $mapping, parameterLimit: 900))->links($relation);
     }
 
     private function caseRows(string $owner = 'owner-a'): array

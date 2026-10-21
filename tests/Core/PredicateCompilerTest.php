@@ -13,17 +13,21 @@ use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Solo\Repository\Filter;
+use Solo\Repository\Internal\Database;
+use Solo\Repository\Internal\FieldResolver;
 use Solo\Repository\Internal\PredicateCompiler;
 use Solo\Repository\Mapping;
 
 final class PredicateCompilerTest extends TestCase
 {
     private Connection $connection;
+    private Database $db;
     private Mapping $mapping;
 
     protected function setUp(): void
     {
         $this->connection = DriverManager::getConnection(['driver' => 'pdo_sqlite', 'memory' => true]);
+        $this->db = new Database($this->connection, 900);
         $this->mapping = new Mapping(
             table: 'items',
             columns: [
@@ -190,6 +194,55 @@ final class PredicateCompilerTest extends TestCase
         yield 'invalid field in empty in' => [['unknown IN' => []]];
     }
 
+    #[DataProvider('mistypedValues')]
+    public function testValuesMustFitTheFieldTypeBeforeBinding(array|Filter $criteria, string $message): void
+    {
+        $builder = $this->builder();
+
+        try {
+            $this->compiler($builder)->compile($criteria);
+            self::fail('Expected a value the driver would coerce to be rejected.');
+        } catch (InvalidArgumentException $exception) {
+            self::assertSame($message, $exception->getMessage());
+            self::assertSame([], $builder->getParameters());
+        }
+    }
+
+    public static function mistypedValues(): iterable
+    {
+        $integer = 'Field "id" requires an integer or a canonical decimal string.';
+        yield 'letters' => [['id' => 'abc'], $integer];
+        yield 'numeric prefix' => [['id' => '1abc'], $integer];
+        yield 'leading zero' => [['id' => '01'], $integer];
+        yield 'whitespace' => [['id' => ' 1'], $integer];
+        yield 'float' => [['id >' => 1.5], $integer];
+        yield 'boolean' => [['id' => true], $integer];
+        yield 'outside the PHP integer range' => [['id' => '9223372036854775808'], $integer];
+        yield 'in element' => [['id IN' => [1, '2x']], $integer];
+        yield 'like pattern' => [['id LIKE' => '1%'], $integer];
+        yield 'negated group' => [Filter::not(['id' => 'x']), $integer];
+        $boolean = 'Field "enabled" requires a boolean, 0 or 1.';
+        yield 'boolean word' => [['enabled' => 'false'], $boolean];
+        yield 'boolean two' => [['enabled' => 2], $boolean];
+        $number = 'Field "price" requires a finite number or a decimal string.';
+        yield 'decimal letters' => [['price >=' => 'cheap'], $number];
+        yield 'decimal exponent' => [['price <' => '1e999'], $number];
+        yield 'decimal infinity' => [['price <' => INF], $number];
+        yield 'decimal boolean' => [['price' => false], $number];
+        $string = 'Field "name" requires a string, an integer or a Stringable.';
+        yield 'string boolean' => [['name' => true], $string];
+        yield 'string float' => [['name' => 1.5], $string];
+    }
+
+    public function testValuesInTheirTypeFormsAreAccepted(): void
+    {
+        self::assertSame([1, 4], $this->selectIds(['id IN' => [1, '4', '-7'], 'enabled' => '1']));
+        self::assertSame([2, 5], $this->selectIds(['enabled' => 0]));
+        self::assertSame([1, 2, 4], $this->selectIds(['price >=' => '10.50']));
+        self::assertSame([5], $this->selectIds(['price <' => 6]));
+        self::assertSame([5], $this->selectIds(['note' => 0]));
+    }
+
     #[DataProvider('constantCriteria')]
     public function testConstantsNormalizeForWriteGuardsWithoutUnusedParameters(
         array|Filter $criteria,
@@ -265,10 +318,10 @@ final class PredicateCompilerTest extends TestCase
         $builder = $this->builder();
         $builder->setParameter('existing', 'Alpha', Types::STRING);
         $builder->where('i.name = :existing');
-        $sql = $this->compiler($builder)->compile(['id IN' => range(1, PredicateCompiler::MAX_PARAMETERS - 1)]);
+        $sql = $this->compiler($builder)->compile(['id IN' => range(1, 899)]);
 
         self::assertIsString($sql);
-        self::assertCount(PredicateCompiler::MAX_PARAMETERS, $builder->getParameters());
+        self::assertCount(900, $builder->getParameters());
         self::assertSame([1], $this->executeIds($builder->andWhere($sql)));
     }
 
@@ -278,7 +331,7 @@ final class PredicateCompilerTest extends TestCase
         $builder->setParameter('existing', 7, Types::INTEGER);
 
         try {
-            $this->compiler($builder)->compile(['id IN' => range(1, PredicateCompiler::MAX_PARAMETERS)]);
+            $this->compiler($builder)->compile(['id IN' => range(1, 900)]);
             self::fail('Expected the total parameter count to be rejected.');
         } catch (InvalidArgumentException $exception) {
             self::assertStringContainsString('parameter limit', $exception->getMessage());
@@ -290,17 +343,11 @@ final class PredicateCompilerTest extends TestCase
     {
         $builder = $this->connection->createQueryBuilder()->update('items')->set('note', ':note');
         $builder->setParameter('note', 'changed', Types::STRING);
-        $sql = (new PredicateCompiler($this->connection, $this->mapping, $builder))->compile(['id' => 2]);
+        $sql = (new PredicateCompiler($this->db, $this->mapping, $builder))->compile(['id' => 2]);
 
         self::assertIsString($sql);
         self::assertSame(1, $builder->where($sql)->executeStatement());
         self::assertSame([2], $this->selectIds(['note' => 'changed']));
-    }
-
-    public function testInvalidAliasIsRejected(): void
-    {
-        $this->expectException(InvalidArgumentException::class);
-        new PredicateCompiler($this->connection, $this->mapping, $this->builder(), 'i; DELETE FROM items');
     }
 
     private function builder(): QueryBuilder
@@ -310,7 +357,12 @@ final class PredicateCompilerTest extends TestCase
 
     private function compiler(QueryBuilder $builder): PredicateCompiler
     {
-        return new PredicateCompiler($this->connection, $this->mapping, $builder, 'i');
+        return new PredicateCompiler(
+            $this->db,
+            $this->mapping,
+            $builder,
+            new FieldResolver($this->db, $this->mapping, $builder, 'i', null),
+        );
     }
 
     private function selectIds(array|Filter $criteria): array

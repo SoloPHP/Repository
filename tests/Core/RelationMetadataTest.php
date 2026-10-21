@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Solo\Repository\Tests\Core;
 
-use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\DriverManager;
 use Doctrine\DBAL\Types\Types;
 use InvalidArgumentException;
@@ -22,53 +21,41 @@ use UnexpectedValueException;
 
 final class RelationMetadataTest extends TestCase
 {
-    private Connection $db;
-
-    protected function setUp(): void
-    {
-        $this->db = DriverManager::getConnection(['driver' => 'pdo_sqlite', 'memory' => true]);
-    }
-
-    protected function tearDown(): void
-    {
-        $this->db->close();
-    }
-
-    public function testLazyFactoriesAllowCircularRepositories(): void
+    public function testLazyFactoriesAllowCircularMappings(): void
     {
         $owner = null;
         $target = null;
         $calls = 0;
-        $owner = new Repository($this->db, new Mapping(
+        $owner = new Mapping(
             'owners',
             ['id' => Types::INTEGER, 'target_id' => Types::INTEGER],
             static fn (array $row): object => (object) $row,
             relations: ['target' => new BelongsTo(
-                static function () use (&$target, &$calls): Repository {
+                static function () use (&$target, &$calls): Mapping {
                     $calls++;
                     return $target;
                 },
                 'target_id',
                 static fn (object $entity, mixed $related): object => $entity,
             )],
-        ));
-        $target = new Repository($this->db, new Mapping(
+        );
+        $target = new Mapping(
             'targets',
             ['id' => Types::INTEGER],
             static fn (array $row): object => (object) $row,
             relations: ['owners' => new HasMany(
-                static function () use (&$owner): Repository {
+                static function () use (&$owner): Mapping {
                     return $owner;
                 },
                 'target_id',
                 static fn (object $entity, mixed $related): object => $entity,
             )],
-        ));
+        );
 
         self::assertSame(0, $calls);
-        self::assertSame($target, $owner->mapping()->relation('target')->resolve($this->db, $owner->mapping()));
+        self::assertSame($target, $owner->relation('target')->resolve($owner));
         self::assertSame(1, $calls);
-        self::assertSame($owner, $target->mapping()->relation('owners')->resolve($this->db, $target->mapping()));
+        self::assertSame($owner, $target->relation('owners')->resolve($target));
     }
 
     public function testBelongsToRequiresAnOwnersPhysicalColumnBeforeResolution(): void
@@ -92,14 +79,14 @@ final class RelationMetadataTest extends TestCase
     #[DataProvider('keyTypes')]
     public function testRelatedKeyFamilies(string $foreignType, string $primaryType, bool $compatible): void
     {
-        $target = new Repository($this->db, new Mapping(
+        $target = new Mapping(
             'targets',
             ['id' => $primaryType],
             static fn (array $row): object => (object) $row,
             generatedId: false,
-        ));
+        );
         $relation = new BelongsTo(
-            static fn (): Repository => $target,
+            static fn (): Mapping => $target,
             'target_id',
             static fn (object $entity, mixed $related): object => $entity,
         );
@@ -113,7 +100,7 @@ final class RelationMetadataTest extends TestCase
         if (!$compatible) {
             $this->expectException(InvalidArgumentException::class);
         }
-        self::assertSame($target, $relation->resolve($this->db, $owner));
+        self::assertSame($target, $relation->resolve($owner));
     }
 
     public static function keyTypes(): iterable
@@ -127,21 +114,21 @@ final class RelationMetadataTest extends TestCase
     #[DataProvider('targetFkRelations')]
     public function testTargetForeignKeyCannotBeAProjectedTranslation(string $class): void
     {
-        $target = new Repository($this->db, new Mapping(
+        $target = new Mapping(
             'targets',
             ['id' => Types::INTEGER],
             static fn (array $row): object => (object) $row,
             translations: new Translations('target_translations', 'target_id', ['owner_id' => Types::STRING], 'en'),
-        ));
+        );
         $relation = new $class(
-            static fn (): Repository => $target,
+            static fn (): Mapping => $target,
             'owner_id',
             static fn (object $entity, mixed $related): object => $entity,
         );
         $owner = new Mapping('owners', ['id' => Types::INTEGER], static fn (array $row): object => (object) $row);
 
         $this->expectException(InvalidArgumentException::class);
-        $relation->resolve($this->db, $owner);
+        $relation->resolve($owner);
     }
 
     public static function targetFkRelations(): iterable
@@ -150,38 +137,29 @@ final class RelationMetadataTest extends TestCase
         yield [HasMany::class];
     }
 
-    public function testFactoriesMustReturnRepositoriesOnTheSameConnection(): void
+    #[DataProvider('invalidTargets')]
+    public function testFactoriesMustReturnMappings(object $result): void
     {
-        $other = DriverManager::getConnection(['driver' => 'pdo_sqlite', 'memory' => true]);
         $mapping = new Mapping('items', ['id' => Types::INTEGER], static fn (array $row): object => (object) $row);
-        $target = new Repository($other, $mapping);
         $relation = new BelongsToMany(
-            static fn (): Repository => $target,
+            static fn (): object => $result,
             'pivot',
             'owner_id',
             'target_id',
             static fn (object $entity, mixed $related): object => $entity,
         );
 
-        $this->expectException(InvalidArgumentException::class);
-        try {
-            $relation->resolve($this->db, $mapping);
-        } finally {
-            $other->close();
-        }
+        $this->expectException(UnexpectedValueException::class);
+        $relation->resolve($mapping);
     }
 
-    public function testInvalidFactoryResultIsRejected(): void
+    public static function invalidTargets(): iterable
     {
         $mapping = new Mapping('items', ['id' => Types::INTEGER], static fn (array $row): object => (object) $row);
-        $relation = new HasMany(
-            static fn (): object => new \stdClass(),
-            'owner_id',
-            static fn (object $entity, mixed $related): object => $entity,
-        );
-
-        $this->expectException(UnexpectedValueException::class);
-        $relation->resolve($this->db, $mapping);
+        yield 'object' => [new \stdClass()];
+        yield 'repository' => [
+            new Repository(DriverManager::getConnection(['driver' => 'pdo_sqlite', 'memory' => true]), $mapping),
+        ];
     }
 
     public function testUnsupportedRelationDefinitionIsRejectedBeforeFactoryInvocation(): void
@@ -198,7 +176,7 @@ final class RelationMetadataTest extends TestCase
         $mapping = new Mapping('items', ['id' => Types::INTEGER], static fn (array $row): object => (object) $row);
 
         $this->expectException(InvalidArgumentException::class);
-        $relation->resolve($this->db, $mapping);
+        $relation->resolve($mapping);
     }
 
     public function testMappingRejectsUnknownRelation(): void
@@ -245,6 +223,40 @@ final class RelationMetadataTest extends TestCase
             'id',
             static fn (object $entity, mixed $related): object => $entity,
         );
+    }
+
+    #[DataProvider('invalidDefaultOrders')]
+    public function testDefaultCollectionOrderMustUsePlainFieldsAndDirections(array $orderBy): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+
+        new HasMany(
+            static fn (): never => throw new \RuntimeException('not resolved'),
+            'owner_id',
+            static fn (object $entity, array $related): object => $entity,
+            $orderBy,
+        );
+    }
+
+    public static function invalidDefaultOrders(): iterable
+    {
+        yield 'SQL in direction' => [['position' => 'ASC NULLS LAST']];
+        yield 'qualified field' => [['items.position' => 'ASC']];
+        yield 'list instead of map' => [['position']];
+    }
+
+    public function testDefaultCollectionOrderIsNormalized(): void
+    {
+        $relation = new BelongsToMany(
+            static fn (): never => throw new \RuntimeException('not resolved'),
+            'pivot',
+            'owner_id',
+            'target_id',
+            static fn (object $entity, array $related): object => $entity,
+            ['position' => 'asc', 'id' => 'DESC'],
+        );
+
+        self::assertSame(['position' => 'ASC', 'id' => 'DESC'], $relation->orderBy);
     }
 
     public function testForeignKeyRejectsSqlFragments(): void

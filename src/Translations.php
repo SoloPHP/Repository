@@ -6,6 +6,7 @@ namespace Solo\Repository;
 
 use Doctrine\DBAL\Types\Types;
 use InvalidArgumentException;
+use Solo\Repository\Internal\Identifier;
 use Solo\Repository\Internal\Locale;
 
 final readonly class Translations
@@ -18,9 +19,9 @@ final readonly class Translations
         public string $defaultLocale,
         public string $localeColumn = 'locale',
     ) {
-        self::validateIdentifier($table);
-        self::validateIdentifier($foreignKey);
-        self::validateIdentifier($localeColumn);
+        Identifier::assert($table);
+        Identifier::assert($foreignKey);
+        Identifier::assert($localeColumn);
         new Locale($defaultLocale);
 
         if ($foreignKey === $localeColumn) {
@@ -42,7 +43,7 @@ final readonly class Translations
                 throw new InvalidArgumentException('Translation columns must be keyed by column names.');
             }
 
-            self::validateIdentifier($column);
+            Identifier::assert($column);
 
             if ($column === $foreignKey || $column === $localeColumn) {
                 throw new InvalidArgumentException('Translation key and locale columns cannot be translated fields.');
@@ -51,13 +52,6 @@ final readonly class Translations
             if (!in_array($type, [Types::STRING, Types::TEXT], true)) {
                 throw new InvalidArgumentException('Translated columns must use the DBAL string or text type.');
             }
-        }
-    }
-
-    private static function validateIdentifier(string $identifier): void
-    {
-        if (preg_match('/\A[A-Za-z_][A-Za-z0-9_]*\z/', $identifier) !== 1) {
-            throw new InvalidArgumentException(sprintf('Invalid SQL identifier "%s".', $identifier));
         }
     }
 }

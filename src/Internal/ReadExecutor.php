@@ -4,15 +4,12 @@ declare(strict_types=1);
 
 namespace Solo\Repository\Internal;
 
-use Doctrine\DBAL\Connection;
+use Closure;
 use Doctrine\DBAL\Query\QueryBuilder;
 use InvalidArgumentException;
 use Solo\Repository\Filter;
 use Solo\Repository\Mapping;
-use Solo\Repository\Relations\BelongsTo;
 use Solo\Repository\Relations\BelongsToMany;
-use Solo\Repository\Relations\HasMany;
-use Solo\Repository\Relations\HasOne;
 use Solo\Repository\Relations\Relation;
 use Solo\Repository\Visibility;
 
@@ -24,22 +21,35 @@ use Solo\Repository\Visibility;
  */
 final readonly class ReadExecutor
 {
+    private const string ALIAS = 'br_base';
+
     private ?Locale $locale;
+
+    /** @var RowMapper<T> */
+    private RowMapper $mapper;
 
     /** @param Mapping<T> $mapping */
     public function __construct(
-        private Connection $connection,
+        private Database $db,
         private Mapping $mapping,
         private Visibility $visibility = Visibility::Active,
         ?Locale $locale = null,
     ) {
-        if ($visibility === Visibility::Deleted && $mapping->softDeleteColumn === null) {
-            throw new InvalidArgumentException('Deleted visibility requires a soft-delete column.');
-        }
+        SoftDelete::assertSupported($mapping, $visibility);
+        $this->locale = Locale::effective($locale, $mapping);
+        $this->mapper = new RowMapper($mapping, $db);
+    }
 
-        $this->locale = $locale ?? ($mapping->translations === null
-            ? null
-            : new Locale($mapping->translations->defaultLocale));
+    /** @return Mapping<T> */
+    public function mapping(): Mapping
+    {
+        return $this->mapping;
+    }
+
+    /** @return RowMapper<T> */
+    public function mapper(): RowMapper
+    {
+        return $this->mapper;
     }
 
     public function locale(): ?Locale
@@ -75,15 +85,8 @@ final readonly class ReadExecutor
             $projection[] = $fields->projection($column);
         }
         $query->select(...$projection);
-        foreach ($orderBy as $column => $direction) {
-            if (!is_string($column) || !is_string($direction)) {
-                throw new InvalidArgumentException('Order must map column names to ASC or DESC.');
-            }
-            $direction = strtoupper($direction);
-            if (!in_array($direction, ['ASC', 'DESC'], true)) {
-                throw new InvalidArgumentException('Order direction must be ASC or DESC.');
-            }
-            $query->addOrderBy($fields->expression($column), $direction);
+        foreach (OrderBy::normalize($orderBy) as $field => $direction) {
+            $query->addOrderBy($fields->expression($field), $direction);
         }
 
         $this->applyCriteria($query, $fields, $criteria);
@@ -91,70 +94,178 @@ final readonly class ReadExecutor
         return $query->setMaxResults($limit)->setFirstResult($offset);
     }
 
-    /** @param array<string, mixed>|Filter $criteria */
-    public function baseQuery(array|Filter $criteria = []): QueryBuilder
-    {
-        [$query, $fields] = $this->createQuery();
-        $this->applyCriteria($query, $fields, $criteria);
-
-        return $query;
+    /**
+     * Every read field, as model reads and relation loads select them.
+     *
+     * @param array<string, mixed>|Filter $criteria
+     * @param array<array-key, mixed> $orderBy
+     */
+    public function selectAll(
+        array|Filter $criteria = [],
+        array $orderBy = [],
+        ?int $limit = null,
+        int $offset = 0,
+    ): QueryBuilder {
+        return $this->select(array_keys($this->mapping->readColumns()), $criteria, $orderBy, $limit, $offset);
     }
 
     /**
-     * Join owners to keep key matching in SQL, including string-key collation rules.
+     * One value selected over the visible rows that match the criteria.
      *
-     * @param list<int|string> $ownerIds
+     * @param Closure(FieldResolver): string $select
+     * @param array<string, mixed>|Filter $criteria
+     */
+    public function scalar(Closure $select, array|Filter $criteria, ?int $limit = null): mixed
+    {
+        [$query, $fields] = $this->createQuery();
+        $query->select($select($fields));
+        $this->applyCriteria($query, $fields, $criteria);
+        $result = $query->setMaxResults($limit)->executeQuery();
+        try {
+            return $result->fetchOne();
+        } finally {
+            $result->free();
+        }
+    }
+
+    /**
+     * Targets whose key column holds one of the integer keys; the loader matches them in PHP.
+     *
+     * @param non-empty-list<int|string> $keys
      * @param array<string, mixed>|Filter $criteria
      * @param array<string, string> $orderBy
      */
-    public function selectRelated(
-        Relation $via,
-        Mapping $owner,
-        array $ownerIds,
-        array|Filter $criteria = [],
-        array $orderBy = [],
-    ): QueryBuilder {
-        $query = $this->select(array_keys($this->mapping->readColumns()), $criteria, $orderBy);
-        $ownerKey = $this->qualified('br_owner', $owner->primaryKey);
-        if ($via instanceof BelongsTo) {
-            $condition = $this->qualified('br_base', $this->mapping->primaryKey)
-                . ' = ' . $this->qualified('br_owner', $via->foreignKey);
-        } elseif ($via instanceof HasOne || $via instanceof HasMany) {
-            $condition = $ownerKey . ' = ' . $this->qualified('br_base', $via->foreignKey);
-        } else {
-            throw new InvalidArgumentException('A direct load requires BelongsTo, HasOne or HasMany.');
-        }
+    public function selectWhereIn(string $column, array $keys, array|Filter $criteria, array $orderBy): QueryBuilder
+    {
+        $query = $this->selectAll($criteria, $orderBy);
 
-        $query->innerJoin('br_base', $this->connection->quoteIdentifier($owner->table), 'br_owner', $condition)
-            ->addSelect($ownerKey . ' AS ' . $this->connection->quoteIdentifier($this->ownerColumn()))
-            ->andWhere($this->ownerPredicate($query, $ownerKey, $owner, $ownerIds));
+        return $query->andWhere($this->db->inList(
+            $query,
+            $this->db->qualified(self::ALIAS, $column),
+            $this->mapping->columnType($column),
+            $keys,
+        ));
+    }
+
+    /**
+     * Joins owners so that string keys match under the database collation; every row also selects
+     * the canonical key of its owner. See joinedRecords().
+     *
+     * @param ReadExecutor<object> $owner
+     * @param non-empty-list<int|string> $ownerIds
+     * @param array<string, mixed>|Filter $criteria
+     * @param array<string, string> $orderBy
+     */
+    public function selectJoined(
+        Relation $relation,
+        ReadExecutor $owner,
+        array $ownerIds,
+        array|Filter $criteria,
+        array $orderBy,
+    ): QueryBuilder {
+        $query = $this->selectAll($criteria, $orderBy);
+        $ownerMapping = $owner->mapping();
+        $ownerKey = $this->db->qualified('br_owner', $ownerMapping->primaryKey);
+        $query->innerJoin(
+            self::ALIAS,
+            $this->db->quote($ownerMapping->table),
+            'br_owner',
+            $relation->keyCondition(
+                $this->db->qualified('br_owner', $relation->ownerKey($ownerMapping)),
+                $this->db->qualified(self::ALIAS, $relation->targetKey($this->mapping)),
+            ),
+        )
+            ->addSelect($ownerKey . ' AS ' . $this->db->quote($this->ownerColumn()))
+            ->andWhere($this->db->inList(
+                $query,
+                $ownerKey,
+                $ownerMapping->columnType($ownerMapping->primaryKey),
+                $ownerIds,
+            ));
 
         return $query;
     }
 
     /**
-     * Keep each owner's entire collection in one ordered SQL result, even with large fan-out.
+     * Owner and target keys of the pivot rows of these owners, canonical through both tables.
      *
-     * @param list<int|string> $ownerIds
+     * @param BelongsToMany<object, object> $via
+     * @param ReadExecutor<object> $owner
+     * @param non-empty-list<int|string> $ownerIds
+     * @return list<array{string, string}>
+     */
+    public function linkedKeys(BelongsToMany $via, ReadExecutor $owner, array $ownerIds): array
+    {
+        $ownerMapping = $owner->mapping();
+        $ownerKey = $this->db->qualified('br_owner_table', $ownerMapping->primaryKey);
+        $targetKey = $this->db->qualified('br_target_table', $this->mapping->primaryKey);
+        $query = $this->db->connection->createQueryBuilder()
+            ->select(
+                $ownerKey . ' AS ' . $this->db->quote('br_owner'),
+                $targetKey . ' AS ' . $this->db->quote('br_related'),
+            )
+            ->from($this->db->quote($via->pivotTable), 'br_pivot')
+            ->innerJoin(
+                'br_pivot',
+                $this->db->quote($ownerMapping->table),
+                'br_owner_table',
+                $ownerKey . ' = ' . $this->db->qualified('br_pivot', $via->foreignPivotKey),
+            )
+            ->innerJoin(
+                'br_pivot',
+                $this->db->quote($this->mapping->table),
+                'br_target_table',
+                $targetKey . ' = ' . $this->db->qualified('br_pivot', $via->relatedPivotKey),
+            );
+        $query->where($this->db->inList(
+            $query,
+            $ownerKey,
+            $ownerMapping->columnType($ownerMapping->primaryKey),
+            $ownerIds,
+        ));
+
+        $keys = [];
+        foreach ($this->fetchRows($query) as $row) {
+            $keys[] = [
+                RowMapper::key($owner->mapper()->rowId($row['br_owner'])),
+                RowMapper::key($this->mapper->rowId($row['br_related'])),
+            ];
+        }
+
+        return $keys;
+    }
+
+    /**
+     * Keeps each owner's entire collection in one ordered SQL result, even with large fan-out.
+     *
+     * @param BelongsToMany<object, object> $via
+     * @param ReadExecutor<object> $owner
+     * @param non-empty-list<int|string> $ownerIds
      * @param array<string, mixed>|Filter $criteria
      * @param array<string, string> $orderBy
      */
     public function selectLinked(
         BelongsToMany $via,
-        Mapping $owner,
+        ReadExecutor $owner,
         array $ownerIds,
-        array|Filter $criteria = [],
-        array $orderBy = [],
+        array|Filter $criteria,
+        array $orderBy,
     ): QueryBuilder {
-        $query = $this->select(array_keys($this->mapping->readColumns()), $criteria, $orderBy);
-        $quote = $this->connection->quoteIdentifier(...);
-        $ownerKey = $this->qualified('br_link_owner', $owner->primaryKey);
-        $query->andWhere('EXISTS (SELECT 1 FROM ' . $quote($via->pivotTable) . ' br_link'
-            . ' INNER JOIN ' . $quote($owner->table) . ' br_link_owner ON ' . $ownerKey
-            . ' = ' . $this->qualified('br_link', $via->foreignPivotKey)
-            . ' WHERE ' . $this->qualified('br_base', $this->mapping->primaryKey)
-            . ' = ' . $this->qualified('br_link', $via->relatedPivotKey)
-            . ' AND ' . $this->ownerPredicate($query, $ownerKey, $owner, $ownerIds) . ')');
+        $query = $this->selectAll($criteria, $orderBy);
+        $ownerMapping = $owner->mapping();
+        $ownerKey = $this->db->qualified('br_link_owner', $ownerMapping->primaryKey);
+        $query->andWhere('EXISTS (SELECT 1 FROM ' . $this->db->quote($via->pivotTable)
+            . ' ' . $this->db->quote('br_link')
+            . ' INNER JOIN ' . $this->db->quote($ownerMapping->table) . ' ' . $this->db->quote('br_link_owner')
+            . ' ON ' . $ownerKey . ' = ' . $this->db->qualified('br_link', $via->foreignPivotKey)
+            . ' WHERE ' . $this->db->qualified(self::ALIAS, $this->mapping->primaryKey)
+            . ' = ' . $this->db->qualified('br_link', $via->relatedPivotKey)
+            . ' AND ' . $this->db->inList(
+                $query,
+                $ownerKey,
+                $ownerMapping->columnType($ownerMapping->primaryKey),
+                $ownerIds,
+            ) . ')');
 
         return $query;
     }
@@ -171,43 +282,43 @@ final readonly class ReadExecutor
     }
 
     /** @return list<Record<T>> */
-    public function records(QueryBuilder $query, ?Mapping $owner = null): array
+    public function records(QueryBuilder $query): array
     {
-        $mapper = new RowMapper($this->mapping, $this->connection->getDatabasePlatform());
-        $ownerMapper = $owner === null ? null : new RowMapper($owner, $this->connection->getDatabasePlatform());
-        $ownerColumn = $this->ownerColumn();
         $records = [];
         foreach ($this->fetchRows($query) as $row) {
-            $ownerId = null;
-            if ($ownerMapper !== null) {
-                $ownerId = $ownerMapper->id($row[$ownerColumn]);
-                unset($row[$ownerColumn]);
-            }
-            $row = $mapper->convert($row);
-            $records[] = new Record($row, $mapper->hydrateConverted($row), $ownerId);
+            $row = $this->mapper->convert($row);
+            $records[] = new Record($row, $this->mapper->hydrate($row));
         }
 
         return $records;
     }
 
-    /** @param list<int|string> $ownerIds */
-    private function ownerPredicate(QueryBuilder $query, string $field, Mapping $owner, array $ownerIds): string
+    /**
+     * Hydrates each distinct row of a selectJoined() result once and pairs it with every owner.
+     *
+     * @param ReadExecutor<object> $owner
+     * @return array{list<Record<T>>, list<array{string, Record<T>}>} records and [owner key, record] pairs
+     */
+    public function joinedRecords(QueryBuilder $query, ReadExecutor $owner): array
     {
-        if (count($query->getParameters()) + count($ownerIds) > PredicateCompiler::MAX_PARAMETERS) {
-            throw new InvalidArgumentException('The relation query exceeds the parameter limit.');
-        }
-        if ($ownerIds === []) {
-            return '1 = 0';
-        }
-        $type = $owner->columnType($owner->primaryKey);
-        $parameters = [];
-        foreach ($ownerIds as $id) {
-            $parameters[] = $query->createNamedParameter($id, $type);
+        $ownerColumn = $this->ownerColumn();
+        $records = [];
+        $pairs = [];
+        foreach ($this->fetchRows($query) as $row) {
+            $ownerKey = RowMapper::key($owner->mapper()->rowId($row[$ownerColumn]));
+            $key = RowMapper::key($this->mapper->rowId($row[$this->mapping->primaryKey]));
+            if (!isset($records[$key])) {
+                unset($row[$ownerColumn]);
+                $row = $this->mapper->convert($row);
+                $records[$key] = new Record($row, $this->mapper->hydrate($row));
+            }
+            $pairs[] = [$ownerKey, $records[$key]];
         }
 
-        return $field . ' IN (' . implode(', ', $parameters) . ')';
+        return [array_values($records), $pairs];
     }
 
+    /** The owner key column of a joined result, named apart from every mapped field. */
     private function ownerColumn(): string
     {
         $column = 'br_owner_id';
@@ -219,17 +330,12 @@ final readonly class ReadExecutor
         return $column;
     }
 
-    private function qualified(string $alias, string $column): string
-    {
-        return $this->connection->quoteIdentifier($alias) . '.' . $this->connection->quoteIdentifier($column);
-    }
-
     /** @return array{QueryBuilder, FieldResolver} */
     private function createQuery(): array
     {
-        $query = $this->connection->createQueryBuilder();
-        $fields = new FieldResolver($this->connection, $this->mapping, $query, $this->locale, alias: 'br_base');
-        $query->from($this->connection->quoteIdentifier($this->mapping->table), $fields->baseAlias());
+        $query = $this->db->connection->createQueryBuilder();
+        $fields = new FieldResolver($this->db, $this->mapping, $query, self::ALIAS, $this->locale);
+        $query->from($this->db->quote($this->mapping->table), self::ALIAS);
 
         return [$query, $fields];
     }
@@ -237,13 +343,12 @@ final readonly class ReadExecutor
     /** @param array<string, mixed>|Filter $criteria */
     private function applyCriteria(QueryBuilder $query, FieldResolver $fields, array|Filter $criteria): void
     {
-        $predicate = (new PredicateCompiler($this->connection, $this->mapping, $query, fields: $fields))
-            ->compile($criteria);
+        $predicate = (new PredicateCompiler($this->db, $this->mapping, $query, $fields))->compile($criteria);
         $query->where(is_bool($predicate) ? ($predicate ? '1 = 1' : '1 = 0') : $predicate);
 
-        if ($this->mapping->softDeleteColumn !== null && $this->visibility !== Visibility::All) {
-            $column = $fields->expression($this->mapping->softDeleteColumn);
-            $query->andWhere($column . ($this->visibility === Visibility::Deleted ? ' IS NOT NULL' : ' IS NULL'));
+        $visibility = SoftDelete::condition($this->mapping, $this->visibility, $fields->expression(...));
+        if ($visibility !== null) {
+            $query->andWhere($visibility);
         }
     }
 }

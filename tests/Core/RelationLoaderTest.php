@@ -31,10 +31,10 @@ final class RelationLoaderTest extends TestCase
 {
     private Connection $connection;
     private AbstractLogger $logger;
-    private Repository $categories;
-    private Repository $profiles;
-    private Repository $notes;
-    private Repository $tags;
+    private Mapping $categories;
+    private Mapping $profiles;
+    private Mapping $notes;
+    private Mapping $tags;
     private Repository $items;
 
     protected function setUp(): void
@@ -117,16 +117,16 @@ final class RelationLoaderTest extends TestCase
             'INSERT INTO item_tags VALUES (1, 101), (1, 102), (1, 103), (1, 104), (2, 102), (3, 103), (5, 101)'
         );
 
-        $parents = new Repository($this->connection, $this->categoryMapping(defaultLocale: 'fr'));
-        $this->categories = new Repository($this->connection, $this->categoryMapping([
-            'parent' => new BelongsTo(static fn(): Repository => $parents, 'parent_id', self::assign('parent')),
-        ], 'uk'));
-        $this->profiles = new Repository($this->connection, new Mapping(
+        $parents = $this->categoryMapping(defaultLocale: 'fr');
+        $this->categories = $this->categoryMapping([
+            'parent' => new BelongsTo(static fn(): Mapping => $parents, 'parent_id', self::assign('parent')),
+        ], 'uk');
+        $this->profiles = new Mapping(
             'profiles',
             ['id' => Types::INTEGER, 'item_id' => Types::INTEGER, 'label' => Types::STRING],
             self::model(...),
-        ));
-        $this->notes = new Repository($this->connection, new Mapping(
+        );
+        $this->notes = new Mapping(
             'notes',
             [
                 'id' => Types::INTEGER, 'item_id' => Types::INTEGER, 'body' => Types::STRING,
@@ -134,8 +134,8 @@ final class RelationLoaderTest extends TestCase
             ],
             self::model(...),
             softDeleteColumn: 'deleted_at',
-        ));
-        $this->tags = new Repository($this->connection, new Mapping(
+        );
+        $this->tags = new Mapping(
             'tags',
             [
                 'id' => Types::INTEGER, 'slug' => Types::STRING,
@@ -144,7 +144,7 @@ final class RelationLoaderTest extends TestCase
             self::model(...),
             softDeleteColumn: 'deleted_at',
             translations: new Translations('tag_translations', 'tag_id', ['name' => Types::STRING], 'en'),
-        ));
+        );
         $this->items = $this->itemRepository();
         $this->resetLog();
     }
@@ -183,9 +183,75 @@ final class RelationLoaderTest extends TestCase
 
         self::assertCount(4, $this->logger->queries);
         self::assertSame(10, $items[0]->relation('category')->value('id'));
-        self::assertSame(10, $items[1]->relation('category')->value('id'));
-        self::assertContains(1, $this->logger->parameters[1]);
-        self::assertContains(2, $this->logger->parameters[1]);
+        self::assertSame($items[0]->relation('category'), $items[1]->relation('category'));
+        self::assertSame(['en', 10], array_values($this->logger->parameters[1]));
+    }
+
+    public function testSharedIntegerBelongsToTargetIsFetchedAndHydratedOnce(): void
+    {
+        $hydrations = 0;
+        $categories = new Mapping(
+            'categories',
+            ['id' => Types::INTEGER, 'parent_id' => Types::INTEGER, 'deleted_at' => Types::DATETIME_IMMUTABLE],
+            static function (array $row) use (&$hydrations): object {
+                $hydrations++;
+                return self::model($row);
+            },
+            softDeleteColumn: 'deleted_at',
+        );
+        $items = $this->itemRepository(relations: [
+            'category' => new BelongsTo(static fn(): Mapping => $categories, 'category_id', self::assign('category')),
+        ]);
+
+        $models = $items->with(['category'])->findBy(['id IN' => [1, 2, 3, 4]], ['id' => 'ASC']);
+
+        self::assertSame(1, $hydrations);
+        self::assertSame($models[0]->relation('category'), $models[1]->relation('category'));
+        self::assertNull($models[2]->relation('category'));
+        self::assertNull($models[3]->relation('category'));
+        self::assertSame([10, 20], array_values($this->logger->parameters[1]));
+        self::assertStringNotContainsString('"items"', $this->logger->queries[1]);
+    }
+
+    public function testSharedStringBelongsToTargetIsJoinedButHydratedOnce(): void
+    {
+        $this->connection->executeStatement('CREATE TABLE case_parents (id TEXT PRIMARY KEY COLLATE NOCASE)');
+        $this->connection->executeStatement(
+            'CREATE TABLE case_owners (id TEXT PRIMARY KEY COLLATE NOCASE, parent_id TEXT)'
+        );
+        $this->connection->executeStatement("INSERT INTO case_parents VALUES ('parent-a')");
+        $this->connection->executeStatement(
+            "INSERT INTO case_owners VALUES ('one', 'PARENT-A'), ('three', NULL), ('two', 'parent-a')"
+        );
+        $hydrations = 0;
+        $parents = new Mapping(
+            'case_parents',
+            ['id' => Types::STRING],
+            static function (array $row) use (&$hydrations): object {
+                $hydrations++;
+                return self::model($row);
+            },
+            generatedId: false,
+        );
+        $owners = new Repository($this->connection, new Mapping(
+            'case_owners',
+            ['id' => Types::STRING, 'parent_id' => Types::STRING],
+            self::model(...),
+            generatedId: false,
+            relations: [
+                'parent' => new BelongsTo(static fn(): Mapping => $parents, 'parent_id', self::assign('parent')),
+            ],
+        ));
+        $this->resetLog();
+
+        $models = $owners->with(['parent'])->findBy(orderBy: ['id' => 'ASC']);
+
+        self::assertSame(1, $hydrations);
+        self::assertSame('parent-a', $models[0]->relation('parent')->value('id'));
+        self::assertNull($models[1]->relation('parent'));
+        self::assertSame($models[0]->relation('parent'), $models[2]->relation('parent'));
+        self::assertCount(2, $this->logger->queries);
+        self::assertStringContainsString('"case_owners"', $this->logger->queries[1]);
     }
 
     public function testLoadFiltersCollectionsWithoutRemovingOwners(): void
@@ -273,6 +339,48 @@ final class RelationLoaderTest extends TestCase
         self::assertNull($item->relation('category')->relation('parent'));
     }
 
+    public function testCollectionsUseTheRelationDefaultOrderUnlessTheLoadSetsOne(): void
+    {
+        $notes = $this->notes;
+        $tags = $this->tags;
+        $items = $this->itemRepository(relations: [
+            'notes' => new HasMany(static fn(): Mapping => $notes, 'item_id', self::assign('notes'), ['body' => 'desc']),
+            'tags' => new BelongsToMany(
+                static fn(): Mapping => $tags,
+                'item_tags',
+                'item_id',
+                'tag_id',
+                self::assign('tags'),
+                ['id' => 'DESC'],
+            ),
+        ]);
+
+        $item = $items->with(['notes', 'tags'])->find(1);
+        self::assertSame([21, 22], $this->ids($item->relation('notes')));
+        self::assertSame([103, 102, 101], $this->ids($item->relation('tags')));
+
+        $item = $items->with([new Load('notes', orderBy: ['body' => 'ASC']), new Load('tags', ['enabled' => true])])
+            ->find(1);
+        self::assertSame([22, 21], $this->ids($item->relation('notes')));
+        self::assertSame([102, 101], $this->ids($item->relation('tags')));
+    }
+
+    public function testUnknownDefaultOrderFieldFailsBeforeOwnerSql(): void
+    {
+        $notes = $this->notes;
+        $items = $this->itemRepository(relations: [
+            'notes' => new HasMany(static fn(): Mapping => $notes, 'item_id', self::assign('notes'), ['missing' => 'ASC']),
+        ]);
+        $this->resetLog();
+
+        $this->expectException(InvalidArgumentException::class);
+        try {
+            $items->with(['notes'])->find(1);
+        } finally {
+            self::assertSame([], $this->logger->queries);
+        }
+    }
+
     public function testRootLimitIsAppliedBeforeCollections(): void
     {
         $items = $this->items->with(['notes', 'tags'])->findBy(orderBy: ['id' => 'ASC'], limit: 1);
@@ -350,7 +458,7 @@ final class RelationLoaderTest extends TestCase
     {
         $notes = $this->notes;
         $items = $this->itemRepository(relations: [
-            'notes' => new HasMany(static fn(): Repository => $notes, 'item_id', static fn(): string => 'invalid'),
+            'notes' => new HasMany(static fn(): Mapping => $notes, 'item_id', static fn(): string => 'invalid'),
         ]);
         $this->expectException(UnexpectedValueException::class);
         $this->expectExceptionMessage('assign');
@@ -466,19 +574,19 @@ final class RelationLoaderTest extends TestCase
         $this->connection->executeStatement('CREATE TABLE text_children (id TEXT PRIMARY KEY, owner_id TEXT)');
         $this->connection->executeStatement("INSERT INTO text_owners VALUES ('0'), ('01'), ('1')");
         $this->connection->executeStatement("INSERT INTO text_children VALUES ('a', '01'), ('b', '1')");
-        $children = new Repository($this->connection, new Mapping(
+        $children = new Mapping(
             'text_children',
             ['id' => Types::STRING, 'owner_id' => Types::STRING],
             self::model(...),
             generatedId: false,
-        ));
+        );
         $owners = new Repository($this->connection, new Mapping(
             'text_owners',
             ['id' => Types::STRING],
             self::model(...),
             generatedId: false,
             relations: ['children' => new HasMany(
-                static fn(): Repository => $children,
+                static fn(): Mapping => $children,
                 'owner_id',
                 self::assign('children'),
             )],
@@ -509,29 +617,29 @@ final class RelationLoaderTest extends TestCase
         $this->connection->executeStatement("INSERT INTO case_owners VALUES ('owner-a', 'PARENT-A')");
         $this->connection->executeStatement("INSERT INTO case_children VALUES ('child-a', 'OWNER-A')");
         $this->connection->executeStatement("INSERT INTO case_pivot VALUES ('OWNER-A', 'CHILD-A')");
-        $parents = new Repository($this->connection, new Mapping(
+        $parents = new Mapping(
             'case_parents',
             ['id' => Types::STRING],
             self::model(...),
             generatedId: false,
-        ));
-        $children = new Repository($this->connection, new Mapping(
+        );
+        $children = new Mapping(
             'case_children',
             ['id' => Types::STRING, 'owner_id' => Types::STRING],
             self::model(...),
             generatedId: false,
-        ));
+        );
         $owners = new Repository($this->connection, new Mapping(
             'case_owners',
             ['id' => Types::STRING, 'parent_id' => Types::STRING],
             self::model(...),
             generatedId: false,
             relations: [
-                'parent' => new BelongsTo(static fn(): Repository => $parents, 'parent_id', self::assign('parent')),
-                'one' => new HasOne(static fn(): Repository => $children, 'owner_id', self::assign('one')),
-                'many' => new HasMany(static fn(): Repository => $children, 'owner_id', self::assign('many')),
+                'parent' => new BelongsTo(static fn(): Mapping => $parents, 'parent_id', self::assign('parent')),
+                'one' => new HasOne(static fn(): Mapping => $children, 'owner_id', self::assign('one')),
+                'many' => new HasMany(static fn(): Mapping => $children, 'owner_id', self::assign('many')),
                 'linked' => new BelongsToMany(
-                    static fn(): Repository => $children,
+                    static fn(): Mapping => $children,
                     'case_pivot',
                     'owner_id',
                     'child_id',
@@ -552,32 +660,46 @@ final class RelationLoaderTest extends TestCase
 
     public function testInternalOwnerKeyDoesNotOverwriteMappedOrTranslatedFields(): void
     {
-        $this->connection->executeStatement('ALTER TABLE profiles ADD br_owner_id TEXT');
-        $this->connection->executeStatement("UPDATE profiles SET br_owner_id = 'visible base' WHERE id = 1");
+        // String keys load through an owner join, which selects the owner key under a free alias.
+        $this->connection->executeStatement('CREATE TABLE text_owners (id TEXT PRIMARY KEY)');
         $this->connection->executeStatement(
-            'CREATE TABLE profile_translations (profile_id INTEGER, locale TEXT, br_owner_id_ TEXT, '
+            'CREATE TABLE text_profiles (id TEXT PRIMARY KEY, owner_id TEXT, br_owner_id TEXT)'
+        );
+        $this->connection->executeStatement(
+            'CREATE TABLE text_profile_translations (profile_id TEXT, locale TEXT, br_owner_id_ TEXT, '
             . 'UNIQUE(profile_id, locale))'
         );
-        $this->connection->executeStatement("INSERT INTO profile_translations VALUES (1, 'en', 'visible translation')");
-        $this->profiles = new Repository($this->connection, new Mapping(
-            'profiles',
-            [
-                'id' => Types::INTEGER, 'item_id' => Types::INTEGER,
-                'label' => Types::STRING, 'br_owner_id' => Types::STRING,
-            ],
+        $this->connection->executeStatement("INSERT INTO text_owners VALUES ('owner')");
+        $this->connection->executeStatement("INSERT INTO text_profiles VALUES ('profile', 'owner', 'visible base')");
+        $this->connection->executeStatement(
+            "INSERT INTO text_profile_translations VALUES ('profile', 'en', 'visible translation')"
+        );
+        $profiles = new Mapping(
+            'text_profiles',
+            ['id' => Types::STRING, 'owner_id' => Types::STRING, 'br_owner_id' => Types::STRING],
             static function (array $row): object {
-                self::assertSame(['id', 'item_id', 'label', 'br_owner_id', 'br_owner_id_'], array_keys($row));
+                self::assertSame(['id', 'owner_id', 'br_owner_id', 'br_owner_id_'], array_keys($row));
                 return self::model($row);
             },
+            generatedId: false,
             translations: new Translations(
-                'profile_translations',
+                'text_profile_translations',
                 'profile_id',
                 ['br_owner_id_' => Types::STRING],
                 'en',
             ),
+        );
+        $owners = new Repository($this->connection, new Mapping(
+            'text_owners',
+            ['id' => Types::STRING],
+            self::model(...),
+            generatedId: false,
+            relations: [
+                'profile' => new HasOne(static fn(): Mapping => $profiles, 'owner_id', self::assign('profile')),
+            ],
         ));
 
-        $profile = $this->items->with(['profile'])->find(1)->relation('profile');
+        $profile = $owners->with(['profile'])->find('owner')->relation('profile');
         self::assertSame('visible base', $profile->value('br_owner_id'));
         self::assertSame('visible translation', $profile->value('br_owner_id_'));
     }
@@ -600,21 +722,21 @@ final class RelationLoaderTest extends TestCase
                 : null,
             relations: $relations ?? [
                 'category' => new BelongsTo(
-                    fn(): Repository => $this->categories,
+                    fn(): Mapping => $this->categories,
                     'category_id',
                     self::assign('category'),
                 ),
-                'profile' => new HasOne(fn(): Repository => $this->profiles, 'item_id', self::assign('profile')),
-                'notes' => new HasMany(fn(): Repository => $this->notes, 'item_id', self::assign('notes')),
+                'profile' => new HasOne(fn(): Mapping => $this->profiles, 'item_id', self::assign('profile')),
+                'notes' => new HasMany(fn(): Mapping => $this->notes, 'item_id', self::assign('notes')),
                 'tags' => new BelongsToMany(
-                    fn(): Repository => $this->tags,
+                    fn(): Mapping => $this->tags,
                     'item_tags',
                     'item_id',
                     'tag_id',
                     self::assign('tags'),
                 ),
             ],
-        ));
+        ), parameterLimit: 900);
     }
 
     private function categoryMapping(array $relations = [], string $defaultLocale = 'en'): Mapping

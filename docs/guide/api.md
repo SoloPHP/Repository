@@ -2,9 +2,9 @@
 
 This reference describes Solo Repository 1.0: PHP 8.3+, Doctrine DBAL `^4.3`, and the `Solo\Repository` namespace. Relation definitions live in `Solo\Repository\Relations`. See the [design and integration guide](details.md) and `examples/definitions.php` in the source checkout.
 
-`Repository<T>`, `Mapping<T>` and `ReadQuery<T>` use PHPDoc generics, where `T` is an object. The runtime checks that hydration and relation assignment return objects; it does not enforce their concrete class. These classes, the configuration objects and the write helpers are `final readonly`. Readonly configuration does not make the shared DBAL connection, returned models or objects captured by callbacks immutable.
+`Repository<T>`, `Mapping<T>` and `ReadQuery<T>` use PHPDoc generics, where `T` is an object. `T` is covariant, so `Repository<Product>` is accepted where `Repository<object>` is expected. Relation definitions are generic over their owner and target models, so static analysis checks every `assign` callback against the target mapping. The runtime checks that hydration and relation assignment return objects; it does not enforce their concrete class. These classes, the configuration objects and the write helpers are `final readonly`. Readonly configuration does not make the shared DBAL connection, returned models or objects captured by callbacks immutable.
 
-The public API consists of the types and methods documented below. The `Internal` namespace, `Repository::connection()`, `Repository::mapping()` and `Relations\Relation::resolve()` are implementation details without a semantic-versioning compatibility promise. The abstract `Relation` base is not an extension point: use the four supplied final definitions. The legacy `BaseRepository`, `RepositoryInterface` and singular `Relation` namespace belong to the separate `solophp/base-repository` package; see the [migration guide](migration.md).
+The public API consists of the types and methods documented below. The `Internal` namespace and members marked `@internal` are implementation details without a semantic-versioning compatibility promise: the constructors of `ReadQuery`, `LinkSet` and `TranslationStore` (obtain them from a `Repository`), the properties of `Filter`, and `Relations\Relation::resolve()`. The abstract `Relation` base is not an extension point: use the four supplied final definitions. The legacy `BaseRepository`, `RepositoryInterface` and singular `Relation` namespace belong to the separate `solophp/base-repository` package; see the [migration guide](migration.md).
 
 ## A minimal repository
 
@@ -83,14 +83,14 @@ The single primary key must be present in `columns` and use one of:
 
 Methods with a separate ID argument and explicit primary keys in insert data normalize that ID before SQL. Integer strings must match `0` or an optionally negative decimal integer without leading zeros: `12` and `-12` are valid; `01`, `+1`, `-0`, `1.5`, whitespace and `12x` are invalid. `integer`/`smallint` IDs outside the PHP integer range are rejected. `bigint` conversion follows DBAL and may return a string outside that range. Database column ranges and UUID syntax remain database/type concerns.
 
-Ordinary criteria values use DBAL conversion, not this separate ID normalization. For example, application input supplied to `findBy(['id' => $value])` is not validated like the argument of `find($value)`.
+Criteria values of integer fields follow the same rule without being converted: `findBy(['id' => '12x'])` throws instead of matching 12. See [Criteria and Filter](#criteria-and-filter) for the other field types.
 
 `softDeleteColumn`, when configured, must be a base column using `datetime`, `datetime_immutable`, `datetimetz` or `datetimetz_immutable`. The physical column must allow NULL. Translated fields must not overlap with base columns. A `BelongsTo` owner FK must already be a base column; target-side relation metadata is checked when the relation is resolved.
 
 ## Repository and read queries
 
 ```php
-Repository::__construct(Connection $connection, Mapping $mapping);
+Repository::__construct(Connection $connection, Mapping $mapping, ?int $parameterLimit = null);
 Repository::read(): ReadQuery;                          // ReadQuery<T>
 Repository::withLocale(string $locale, ?string $fallback = null): ReadQuery;
 Repository::with(array $relations): ReadQuery;          // list<string|Load>
@@ -98,20 +98,11 @@ Repository::translations(): TranslationStore;
 Repository::links(string $relation): LinkSet;
 ```
 
-`withLocale()` and `with()` are shorthands for `read()->withLocale()` and `read()->with()`. Use `read()->withVisibility()` to change root visibility. `translations()` requires translation metadata; `links()` requires a `BelongsToMany` definition and resolves its target repository immediately.
+`withLocale()` and `with()` are shorthands for `read()->withLocale()` and `read()->with()`. Use `read()->withVisibility()` to change root visibility. `translations()` requires translation metadata; `links()` requires a `BelongsToMany` definition and resolves its target mapping immediately. `parameterLimit` overrides the [parameter budget](#criteria-and-filter).
 
-Queries are normally obtained from a repository. Their constructor is also public:
+Constructing repositories, queries, link sets and translation stores never opens a connection: the platform is resolved when the first statement is built. Queries are obtained from a repository:
 
 ```php
-ReadQuery::__construct(
-    Connection $connection,
-    Mapping $mapping,
-    Visibility $visibility = Visibility::Active,
-    ?string $locale = null,
-    ?string $fallback = null,
-    array $relations = [],                            // list<string|Load>
-);
-
 ReadQuery::withLocale(string $locale, ?string $fallback = null): self;
 ReadQuery::with(array $relations): self;
 ReadQuery::withVisibility(Visibility $visibility): self;
@@ -126,6 +117,10 @@ ReadQuery::findBy(
 ): array;                                             // list<T>
 ReadQuery::count(array|Filter $criteria = []): int;
 ReadQuery::exists(array|Filter $criteria = []): bool;
+ReadQuery::sum(string $field, array|Filter $criteria = []): mixed;
+ReadQuery::min(string $field, array|Filter $criteria = []): mixed;
+ReadQuery::max(string $field, array|Filter $criteria = []): mixed;
+ReadQuery::avg(string $field, array|Filter $criteria = []): ?float;
 ReadQuery::rows(
     array $columns,                                   // nonempty list<string>
     array|Filter $criteria = [],
@@ -142,6 +137,7 @@ ReadQuery::iterateById(array|Filter $criteria = [], int $batchSize = 500): itera
 - `findBy()` materializes the requested models and their includes. No automatic pagination count is performed.
 - `rows()` returns only the selected, DBAL-converted fields and never calls the hydrator. It rejects nonempty includes; use `with([])` on that branch.
 - `count()` and `exists()` do not hydrate models or resolve/load includes. Relation predicates in their criteria still apply. `exists()` selects a constant with a one-row limit.
+- `sum()`, `min()`, `max()` and `avg()` aggregate one readable field, including a translated field under the query locale, over the rows `count()` would count. `sum()`, `min()` and `max()` convert the result through the field's DBAL type, so a decimal sum is an exact string and `max('created_at')` a `DateTimeImmutable`. `sum()` returns zero of that type when nothing matches; `min()`, `max()` and `avg()` return NULL. `avg()` returns a float. `sum()` and `avg()` require a smallint, integer, bigint, decimal, float or smallfloat field and reject other fields before SQL.
 - Without `orderBy`, ordering is unspecified. Add the primary key as a final tie-breaker for stable pages. Negative limit/offset values are rejected. `limit: 0` validates query settings and returns an empty list without executing the read.
 
 ```php
@@ -168,6 +164,18 @@ An array combines its entries with AND. A bare field name means equality:
 
 Supported operators are `=`, `!=`, `>`, `>=`, `<`, `<=`, `IN`, `NOT IN`, `LIKE`, `NOT LIKE`. Operator spelling is case-insensitive. `= null` and `!= null` become `IS NULL` and `IS NOT NULL`. NULL with other operators is rejected. Arrays require explicit `IN`/`NOT IN`; their elements cannot be NULL or arrays. `IN []` is false, `NOT IN []` is true, and an empty criteria array is true.
 
+A key holds both the field and the operator, so build criteria keys only from fixed strings in your code, never from request parameters or other external input. Whoever controls a key chooses its operator: `filter[price >=]=0` would turn an equality into a comparison. When users choose the fields to filter by, map each allowed name to a fixed key:
+
+```php
+$keys = ['category' => 'category_id', 'min_price' => 'price >=', 'max_price' => 'price <='];
+$criteria = [];
+foreach (array_intersect_key($request, $keys) as $name => $value) {
+    $criteria[$keys[$name]] = $value;
+}
+```
+
+Every value, including each IN element, must have a form of its field type before SQL; a driver would otherwise reinterpret it silently, turning `'12x'` into 12 or, on MySQL, `'false'` into TRUE. Integer fields take `int` or a canonical decimal string. Decimal fields take finite numbers or plain decimal strings such as `'-12.50'`, without an exponent. Float fields take finite numbers or numeric strings with a finite value. Boolean fields take `bool`, `0`, `1`, `'0'` or `'1'`. String, text and GUID fields take strings, integers or `Stringable` objects; enum fields take strings or `Stringable` objects, because MySQL reads an integer as a member index. `simple_array` fields take arrays. A LIKE pattern therefore needs a string field. DBAL itself rejects mistyped dates, intervals and bcmath numbers; JSON, binary and custom types receive their values unchanged. The check covers the form of a value, not the column's range, precision or scale, which stay database constraints: SQLite keeps decimals as REAL, so a decimal beyond that range becomes infinity there.
+
 ```php
 Filter::all(array|Filter ...$parts): Filter;
 Filter::any(array|Filter ...$parts): Filter;
@@ -179,7 +187,7 @@ Filter::related(
 ): Filter;
 ```
 
-`all()` and `any()` require at least one argument. `Filter` is created through these factories; its constructor is private. Its public readonly `operator`, `parts`, `relation` and `visibility` describe the resulting group. All branches are validated, including those eliminated by constant folding. SQL NULL logic still applies: `not(['price >' => '10.00'])` does not automatically include NULL prices.
+`all()` and `any()` require at least one argument. `Filter` is created through these factories; its constructor is private and its properties are internal to the compiler. All branches are validated, including those eliminated by constant folding. SQL NULL logic still applies: `not(['price >' => '10.00'])` does not automatically include NULL prices.
 
 `related()` means EXISTS and accepts a single relation name. Conditions inside one call must match the same related row. Separate calls can match different rows. Use nested calls for deeper relationships and `not(related(...))` for NOT EXISTS:
 
@@ -195,7 +203,7 @@ $criteria = Filter::all(
 
 Related predicates filter owners without duplicating their rows. They do not restrict what `with()` loads. Field paths such as `tags.slug`, raw SQL, implicit scopes and collection sorting are not accepted. LIKE wildcards, case sensitivity, collation and NULL ordering follow the database.
 
-There is a fixed budget of 900 bound parameters per statement, including locale JOINs and nested EXISTS. Keyset iteration reserves one parameter for continuation. Oversized root criteria are rejected rather than split: splitting would change ordering, pagination or Boolean semantics. Loader batches, `insertMany()` and `LinkSet` split their own internal work within this budget.
+Every statement has a budget of bound parameters, including locale JOINs and nested EXISTS. By default it is the platform limit: 65,535 for PostgreSQL and MySQL/MariaDB, 32,766 for SQLite 3.32 or later, and 900 for older SQLite and other platforms. `new Repository($db, $mapping, parameterLimit: 2000)` replaces it for that repository, its queries and its relation loads, for example to reject large root IN filters early. The value must be positive and must not exceed what the server accepts; raise it only on a platform whose real limit is above the default. Keyset iteration reserves one parameter for continuation. Oversized root criteria are rejected rather than split: splitting would change ordering, pagination or Boolean semantics. Loader batches, `insertMany()` and `LinkSet` split their own internal work within this budget; an operation whose single row does not fit, such as a two-parameter pivot row under a budget of 1, throws InvalidArgumentException. Internal key lists (relation loads, `lockForUpdate()` and `LinkSet` deletes) also hold at most 5,000 keys per statement, because longer IN lists can exceed MySQL's range-optimizer memory and turn index lookups into full scans.
 
 ## Translation metadata and locale
 
@@ -233,12 +241,12 @@ The effective locale and fallback are inherited by related reads and predicates,
 
 ## TranslationStore
 
-Prefer `$repository->translations()`; direct construction is also supported:
+Obtain the store from `$repository->translations()`:
 
 ```php
-TranslationStore::__construct(Connection $connection, Mapping $mapping);
 TranslationStore::get(int|string $id, string $locale): ?array; // array<string, string|null>|null
 TranslationStore::save(int|string $id, string $locale, array $patch): void;
+TranslationStore::seed(int|string $id, array $locales, array $values): int; // list<string> locales
 TranslationStore::delete(int|string $id, string $locale): int;
 ```
 
@@ -248,33 +256,48 @@ TranslationStore::delete(int|string $id, string $locale): int;
 - New row: omitted configured fields become NULL, even if their database columns have defaults.
 - Empty patch: validate ID and locale, then execute no SQL.
 
-Each nonempty save performs one native upsert, without reading or hydrating the owner. It is implemented for PostgreSQL/SQLite with `ON CONFLICT`, and MySQL with `ON DUPLICATE KEY UPDATE`. Other platforms are rejected. `delete()` removes one owner/locale pair and returns affected rows. These operations address physical owners, including soft-deleted owners, and participate in the caller's connection transaction. Database constraint errors propagate.
+Each nonempty save performs one native upsert, without reading or hydrating the owner. It is implemented for PostgreSQL/SQLite with `ON CONFLICT`, and MySQL/MariaDB with `ON DUPLICATE KEY UPDATE`. Other platforms are rejected.
+
+`seed()` fills locales that have no translation yet, for example every active locale of a new entity, and returns the number of rows inserted. Existing rows are left unchanged, so seeding can be repeated. Values follow the `save()` rules, and omitted fields of a new row are NULL. Duplicate locales collapse; an empty locale list or empty values execute no SQL. Only a conflict on the `(foreignKey, localeColumn)` pair is skipped: `ON CONFLICT ... DO NOTHING` on PostgreSQL/SQLite and a no-op `ON DUPLICATE KEY UPDATE` on MySQL/MariaDB, which reports existing rows as unchanged unless the connection enables `CLIENT_FOUND_ROWS`. Seeds larger than the parameter budget are split inside one transaction.
+
+`delete()` removes one owner/locale pair and returns affected rows. These operations address physical owners, including soft-deleted owners, and participate in the caller's connection transaction. Database constraint errors propagate.
 
 ## Relations and Load
 
 Import the four concrete definitions from `Solo\Repository\Relations`:
 
 ```php
-BelongsTo::__construct(callable $repository, string $foreignKey, callable $assign);
-HasOne::__construct(callable $repository, string $foreignKey, callable $assign);
-HasMany::__construct(callable $repository, string $foreignKey, callable $assign);
+BelongsTo::__construct(callable $target, string $foreignKey, callable $assign);
+HasOne::__construct(callable $target, string $foreignKey, callable $assign);
+HasMany::__construct(callable $target, string $foreignKey, callable $assign, array $orderBy = []);
 BelongsToMany::__construct(
-    callable $repository,
+    callable $target,
     string $pivotTable,
     string $foreignPivotKey,
     string $relatedPivotKey,
     callable $assign,
+    array $orderBy = [],
 );
 ```
 
-Names/keys are public readonly properties. `repository` and `assign` are public readonly closures. The zero-argument repository factory supports lazy/circular configuration and must return a `Repository` using the exact same `Connection` object, not just the same DSN. Related keys reference primary keys:
+Names/keys are public readonly properties. `target` and `assign` are public readonly closures. The `orderBy` of a to-many definition is the default order of every load of that collection, normalized like `Load::orderBy`; a `Load` with its own non-empty order replaces it. The zero-argument `target` factory returns the target's `Mapping`; it is called lazily, so mappings may reference each other. Related rows are read through the owner repository's connection and parameter budget. Related keys reference primary keys:
 
-| Definition | Foreign-key location | Value passed to `assign` |
+| Definition | Foreign-key location | `assign` signature |
 |---|---|---|
-| `BelongsTo` | Owner's base columns | Target object or NULL |
-| `HasOne` | Target's base columns; enforce UNIQUE | Target object or NULL |
-| `HasMany` | Target's base columns | List of target objects |
-| `BelongsToMany` | Pivot with two distinct FK columns | List of target objects |
+| `BelongsTo<TOwner, TTarget>` | Owner's base columns | `callable(TOwner, ?TTarget): TOwner` |
+| `HasOne<TOwner, TTarget>` | Target's base columns; enforce UNIQUE | `callable(TOwner, ?TTarget): TOwner` |
+| `HasMany<TOwner, TTarget>` | Target's base columns | `callable(TOwner, list<TTarget>): TOwner` |
+| `BelongsToMany<TOwner, TTarget>` | Pivot with two distinct FK columns | `callable(TOwner, list<TTarget>): TOwner` |
+
+```php
+use Solo\Repository\Relations\BelongsTo;
+
+$relation = new BelongsTo(
+    target: static fn(): Mapping => $categories,          // Mapping<Category>
+    foreignKey: 'category_id',
+    assign: static fn(Product $product, ?Category $category): Product => $product->withCategory($category),
+);
+```
 
 Direct FK/PK type compatibility is checked within the integer family or within the string/ASCII/GUID family. Translated fields cannot be FKs. Pivot owner and target PK types may differ; each pivot FK must match its own referenced PK. Both pivot FKs and UNIQUE `(foreignPivotKey, relatedPivotKey)` are required. Additional pivot attributes need their own repository.
 
@@ -304,7 +327,7 @@ $query = $products->with([
 
 A string creates the required path; a `Load` configures its final edge. In this example, `category.parent` retains Active visibility. Duplicate paths are merged; conflicting explicit settings for the same exact path are rejected. Criteria values are compared strictly, so NULL and `''` are different settings. Unknown relations and invalid target fields are checked when preparing model reads, including a read with `limit: 0`.
 
-Load criteria limit related results, not owners. Root pagination happens before collection loading. For each owner batch, a direct relation uses one SELECT and a many-to-many relation uses a pivot SELECT plus a target SELECT. Translation JOINs add no separate query. Large owner sets need more batches. `Load.orderBy` orders each collection using the database; absent ordering is unspecified. There is no per-parent limit, lazy loading, identity map or automatic graph persistence.
+Load criteria limit related results, not owners. Root pagination happens before collection loading. For each owner batch, a direct relation uses one SELECT and a many-to-many relation uses a pivot SELECT plus a target SELECT. Translation JOINs add no separate query. Large owner sets need more batches. Integer keys are matched by value: a `BelongsTo` target shared by many owners is selected, hydrated and assigned as one object. String keys are matched in SQL through the owner table, so equality follows the database collation; each distinct target is still hydrated once. `Load.orderBy` orders each collection using the database; absent ordering is unspecified. There is no per-parent limit, lazy loading, identity map or automatic graph persistence.
 
 ## Visibility and soft deletion
 
@@ -330,9 +353,11 @@ Repository::delete(int|string $id): int;
 Repository::deleteBy(array|Filter $criteria): int;
 Repository::restore(int|string $id): int;
 Repository::purge(int|string $id): int;
+Repository::purgeBy(array|Filter $criteria): int;
+Repository::lockForUpdate(int|string|array $ids): void;     // list<int|string> when an array
 ```
 
-Data/patch arrays use base column names. Translated fields and unknown columns are rejected. Writes do not hydrate or reread models. Every method returning `int`, except `insertGetId()`, returns affected rows. The database/driver controls affected-row semantics: zero from UPDATE does not prove that the row is absent.
+Data/patch arrays use base column names. Translated fields and unknown columns are rejected. Written values follow the type rules of criteria values (see [Criteria and Filter](#criteria-and-filter)) before any SQL, so `update($id, ['quantity' => 'abc'])` throws instead of storing 0; NULL passes through to the database. Writes do not hydrate or reread models. Every method returning `int`, except `insertGetId()`, returns affected rows. The database/driver controls affected-row semantics: zero from UPDATE does not prove that the row is absent.
 
 Both `insert()` and `insertGetId()` perform an INSERT; do not call both for the same record. `generatedId: false` requires an explicit PK. With generated IDs, omit the PK to use the database identity, or supply one permitted by the schema. Empty insert data uses the database's empty identity INSERT syntax/defaults. `insertGetId()` returns the explicit normalized ID or retrieves a generated ID using PostgreSQL `RETURNING` or MySQL/SQLite driver support. No generated-ID strategy is promised for other platforms or database-generated UUIDs.
 
@@ -340,16 +365,17 @@ Explicit inserts do not override `GENERATED ALWAYS` or advance a PostgreSQL sequ
 
 Patch semantics preserve omitted fields and write SQL NULL for explicit NULL. Patches cannot change the primary key or soft-delete column. An empty patch returns zero without SQL after validating its criteria. `updateBy()` and `deleteBy()` accept only base-column criteria and Boolean groups; translated fields and related predicates are rejected. Empty filters and filters folded to true are rejected before visibility is added. This is a guard against empty filters, not a proof that an arbitrary expression selects only a small subset; use DBAL for intentional all-row writes.
 
-With soft deletion, update methods affect only active rows. Delete methods set a UTC timestamp only on active rows; deleting an already deleted row returns zero without replacing its timestamp. `restore()` clears a deleted row's timestamp and requires soft-delete metadata. `purge()` always deletes physically, regardless of visibility. Without soft deletion, delete methods delete physically. Database FK rules determine cleanup of translations and pivot rows.
+With soft deletion, update methods affect only active rows. Delete methods set a UTC timestamp only on active rows; deleting an already deleted row returns zero without replacing its timestamp. `restore()` clears a deleted row's timestamp and requires soft-delete metadata. `purge()` and `purgeBy()` always delete physically, regardless of visibility; `purgeBy()` rejects empty criteria like `deleteBy()`. Without soft deletion, delete methods delete physically. Database FK rules determine cleanup of translations and pivot rows.
+
+`lockForUpdate()` locks the physical rows with the given primary keys until the surrounding transaction ends, regardless of visibility, and rejects calls outside a transaction. IDs are normalized and deduplicated, and rows are locked in key order, which keeps concurrent lockers from deadlocking. Large key sets are split into statements of at most 5,000 keys. Integer keys are sorted before splitting, so the order holds across statements; string keys follow the database collation within each statement. It uses the platform's `SELECT ... FOR UPDATE`; SQLite has no row locks and runs the plain SELECT. Cross-process advisory locks, such as one critical section per order, stay in the application.
 
 `insertMany()` takes a list of rows with identical column sets; key order may differ. It validates row structure before writing, splits by both `batchSize` and the parameter budget, and wraps all chunks in one transaction/savepoint. A later chunk failure rolls back earlier chunks. An empty list returns zero; batch size must still be positive. It returns affected rows, not generated IDs.
 
 ## LinkSet
 
-Prefer `$repository->links('tags')`; direct construction is also supported:
+Obtain link sets from `$repository->links('tags')`:
 
 ```php
-LinkSet::__construct(Connection $connection, Mapping $mapping, string $relation);
 LinkSet::attach(int|string $id, array $ids): void; // list<int|string> target IDs
 LinkSet::detach(int|string $id, array $ids): void;
 LinkSet::sync(int|string $id, array $ids): void;
@@ -379,7 +405,7 @@ $db->transactional(static function () use ($products, $id): void {
 
 Single CRUD statements and translation upserts do not add transactions. Composite operations use DBAL transactions, including nested savepoints in an outer transaction. The package does not close the application connection.
 
-For joins, aggregation, locking, raw projections, special types or other SQL features, use `$db->createQueryBuilder()` or DBAL's execution methods directly. `ReadQuery` has no exported builder or `toDbal()` method. Such queries must apply any desired visibility, locale, parameter typing and result conversion explicitly; DBAL parameter types do not automatically convert fetched rows to mapped PHP types.
+For joins, aggregates over several tables, advisory locks, raw projections, special types or other SQL features, use `$db->createQueryBuilder()` or DBAL's execution methods directly. `ReadQuery` has no exported builder or `toDbal()` method. Such queries must apply any desired visibility, locale, parameter typing and result conversion explicitly; DBAL parameter types do not automatically convert fetched rows to mapped PHP types.
 
 ## Errors and supported boundaries
 
@@ -393,4 +419,4 @@ For joins, aggregation, locking, raw projections, special types or other SQL fea
 
 Validation happens before package SQL where possible; target relations are lazy, and custom callbacks/types can fail during execution. Exception messages and internal implementation types are not a parsing API.
 
-SQLite is covered by the main suite; MySQL 8.4 and PostgreSQL 17 are covered by the real-database matrix. MariaDB and other DBAL platforms are not part of that compatibility matrix. Migrations must supply correct PK/FK types and collation, nullable translation/soft-delete fields, translation/pivot uniqueness and HasOne uniqueness; the package does not introspect these guarantees. There are no composite primary keys, alternate-key relations, schema generation, caches, change tracking, cascaded object writes or model identity guarantees.
+SQLite is covered by the main suite; MySQL 8.4, MariaDB 12.3 and PostgreSQL 17 are covered by the real-database matrix. MariaDB uses the MySQL code paths for generated IDs and upserts. Other DBAL platforms are not supported. Migrations must supply correct PK/FK types and collation, nullable translation/soft-delete fields, translation/pivot uniqueness and HasOne uniqueness; the package does not introspect these guarantees. There are no composite primary keys, alternate-key relations, schema generation, caches, change tracking, cascaded object writes or model identity guarantees.

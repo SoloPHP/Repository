@@ -24,11 +24,11 @@ GitHub through a Composer VCS repository.
    `php examples/crud.php`, `php examples/translations.php`,
    `php examples/relations.php`, and `php examples/migration.php`.
    `examples/definitions.php` contains definitions used by the catalog demo.
-3. Run `composer test:database` on MySQL and PostgreSQL using the
-   [integration instructions](docs/guide/details.md#проверка-на-mysql-и-postgresql).
+3. Run `composer test:database` on MySQL, MariaDB and PostgreSQL using the
+   [integration instructions](docs/guide/details.md#проверка-на-mysql-mariadb-и-postgresql).
    Before tagging, require the complete CI matrix for the candidate commit in
    the new repository: PHP 8.3 / DBAL 4.3.*, PHP 8.3 / current compatible DBAL,
-   PHP 8.5 / current DBAL, each with SQLite, MySQL 8.4, and PostgreSQL 17.
+   PHP 8.5 / current DBAL, each with SQLite, MySQL 8.4, MariaDB 12.3, and PostgreSQL 17.
 4. With Node 24, run `npm ci`, `npm audit`, and `npm run build` in `docs/`.
    The workflow validates pull requests and audits all dependencies. Pushes only
    run checks. Deployment requires a manual Documentation workflow dispatch

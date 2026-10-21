@@ -4,179 +4,137 @@ declare(strict_types=1);
 
 namespace Solo\Repository\Internal;
 
-use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\Query\QueryBuilder;
 use InvalidArgumentException;
 use Solo\Repository\Filter;
+use Solo\Repository\Internal\Predicate\Condition;
+use Solo\Repository\Internal\Predicate\Exists;
+use Solo\Repository\Internal\Predicate\Group;
 use Solo\Repository\Mapping;
-use Solo\Repository\Relations\BelongsTo;
 use Solo\Repository\Relations\BelongsToMany;
-use Solo\Repository\Relations\HasMany;
-use Solo\Repository\Relations\HasOne;
-use Solo\Repository\Visibility;
-use WeakMap;
 
-/** @internal */
+/**
+ * Validates every branch, folds constants, and only then renders SQL and bound parameters.
+ *
+ * @internal
+ */
 final class PredicateCompiler
 {
-    public const int MAX_PARAMETERS = 900;
+    private const string CONDITION = '/\A(' . Identifier::PATTERN
+        . ')(?:\s+(=|!=|>=|<=|>|<|NOT\s+LIKE|LIKE|NOT\s+IN|IN))?\z/i';
 
     private int $parameterIndex = 0;
     private int $relationIndex = 0;
 
-    /** @var WeakMap<Filter, Mapping> */
-    private WeakMap $relatedMappings;
-
-    /** @var WeakMap<Filter, array{query: QueryBuilder, fields: FieldResolver, mapping: Mapping}> */
-    private WeakMap $relatedQueries;
-
+    /**
+     * @param Mapping<object> $mapping
+     * @param FieldResolver|null $fields Read fields with translations and relation predicates;
+     *                                   NULL compiles write criteria over unqualified base columns.
+     */
     public function __construct(
-        private readonly Connection $connection,
+        private readonly Database $db,
         private readonly Mapping $mapping,
         private readonly QueryBuilder $builder,
-        private readonly ?string $alias = null,
         private readonly ?FieldResolver $fields = null,
     ) {
-        $this->relatedMappings = new WeakMap();
-        $this->relatedQueries = new WeakMap();
-        if ($alias !== null && preg_match('/\A[A-Za-z_][A-Za-z0-9_]*\z/', $alias) !== 1) {
-            throw new InvalidArgumentException('A predicate alias must be a plain SQL identifier.');
-        }
     }
 
     /** @param array<array-key, mixed>|Filter $criteria */
     public function compile(array|Filter $criteria): string|bool
     {
-        // Validate every branch before folding constants or touching builder parameters.
-        $normalized = $this->normalize($criteria, $this->mapping);
-        $this->prepareFields($normalized, $this->mapping, $this->fields);
-        $parameterCount = count($this->builder->getParameters()) + $this->countParameters($normalized);
-
-        if ($parameterCount > self::MAX_PARAMETERS) {
-            throw new InvalidArgumentException(
-                'The query exceeds the parameter limit of ' . self::MAX_PARAMETERS . '.',
-            );
+        $predicate = $this->normalize($criteria, $this->mapping);
+        if (is_bool($predicate)) {
+            return $predicate;
         }
 
-        return is_bool($normalized) ? $normalized : $this->render($normalized, $this->mapping, $this->fields);
+        // Reject oversized criteria before binding them; translation joins bind their locales while rendering.
+        $this->db->assertParameters(count($this->builder->getParameters()) + self::countValues($predicate));
+        $sql = $this->render($predicate, $this->fields);
+        $this->db->assertParameters(count($this->builder->getParameters()));
+
+        return $sql;
     }
 
     /**
      * @param array<array-key, mixed>|Filter $criteria
-     * @return array<string, mixed>|Filter|bool
+     * @param Mapping<object> $mapping
      */
-    private function normalize(array|Filter $criteria, Mapping $mapping): array|Filter|bool
+    private function normalize(array|Filter $criteria, Mapping $mapping): Condition|Group|Exists|bool
     {
         if ($criteria instanceof Filter) {
-            if ($criteria->operator === 'RELATED') {
-                return $this->normalizeRelated($criteria, $mapping);
-            }
-
-            $parts = [];
-            foreach ($criteria->parts as $part) {
-                $parts[] = $this->normalize($part, $mapping);
-            }
-
-            if ($criteria->operator === 'NOT') {
-                return is_bool($parts[0]) ? !$parts[0] : Filter::not($parts[0]);
-            }
-
-            return $this->fold($criteria->operator, $parts);
+            return match ($criteria->operator) {
+                FilterOperator::Related => $this->normalizeExists($criteria, $mapping),
+                FilterOperator::Not => self::negate($this->normalize($criteria->parts[0], $mapping)),
+                default => self::fold($criteria->operator, array_map(
+                    fn (array|Filter $part): Condition|Group|Exists|bool => $this->normalize($part, $mapping),
+                    $criteria->parts,
+                )),
+            };
         }
 
         $parts = [];
-        foreach ($criteria as $condition => $value) {
-            if (!is_string($condition)) {
+        foreach ($criteria as $key => $value) {
+            if (!is_string($key)) {
                 throw new InvalidArgumentException('Criteria must use column names as keys.');
             }
 
-            [$column, $operator] = $this->parseCondition($condition);
-            $this->columnType($mapping, $column);
-            $this->validateValue($operator, $value);
-
-            if (is_array($value) && $value === []) {
-                $parts[] = $operator === 'NOT IN';
-            } else {
-                $parts[] = [$column . ' ' . $operator => $value];
-            }
+            [$field, $operator] = self::parseCondition($key);
+            $type = $this->fields === null ? $mapping->columnType($field) : $mapping->fieldType($field);
+            self::validateValue($field, $type, $operator, $value);
+            $parts[] = $value === [] ? $operator === 'NOT IN' : new Condition($field, $operator, $value, $type);
         }
 
-        return $this->fold('AND', $parts);
+        return self::fold(FilterOperator::All, $parts);
     }
 
-    private function normalizeRelated(Filter $criteria, Mapping $mapping): Filter|bool
+    /** @param Mapping<object> $owner */
+    private function normalizeExists(Filter $filter, Mapping $owner): Exists|bool
     {
         if ($this->fields === null) {
             throw new InvalidArgumentException('Related filters are supported only for read queries.');
         }
 
-        $relation = $mapping->relation($criteria->relation);
-        if (
-            !$relation instanceof BelongsTo
-            && !$relation instanceof BelongsToMany
-            && !$relation instanceof HasOne
-            && !$relation instanceof HasMany
-        ) {
-            throw new InvalidArgumentException('Unsupported related filter definition.');
-        }
+        $relation = $owner->relation($filter->relation);
+        $target = $relation->resolve($owner);
+        SoftDelete::assertSupported($target, $filter->visibility);
 
-        $target = $relation->resolve($this->connection, $mapping)->mapping();
-        if ($criteria->visibility === Visibility::Deleted && $target->softDeleteColumn === null) {
-            throw new InvalidArgumentException('Deleted relation visibility requires a soft-delete column.');
-        }
-
-        $child = $this->normalize($criteria->parts[0], $target);
-        if ($child === false) {
+        $criteria = $this->normalize($filter->parts[0], $target);
+        if ($criteria === false) {
             return false;
         }
 
-        $normalized = Filter::related($criteria->relation, $child === true ? [] : $child, $criteria->visibility);
-        $this->relatedMappings[$normalized] = $target;
-
-        return $normalized;
+        return new Exists($relation, $owner, $target, $criteria === true ? null : $criteria, $filter->visibility);
     }
 
-    /**
-     * @param 'AND'|'OR' $operator
-     * @param list<array<string, mixed>|Filter|bool> $parts
-     * @return array<string, mixed>|Filter|bool
-     */
-    private function fold(string $operator, array $parts): array|Filter|bool
+    /** @param list<Condition|Group|Exists|bool> $parts */
+    private static function fold(FilterOperator $operator, array $parts): Condition|Group|Exists|bool
     {
-        $identity = $operator === 'AND';
+        $identity = $operator === FilterOperator::All;
         $remaining = [];
-
         foreach ($parts as $part) {
-            if (is_bool($part)) {
-                if ($part !== $identity) {
-                    return $part;
-                }
-            } else {
+            if (!is_bool($part)) {
                 $remaining[] = $part;
+            } elseif ($part !== $identity) {
+                return $part;
             }
         }
 
-        if ($remaining === []) {
-            return $identity;
-        }
+        return match (count($remaining)) {
+            0 => $identity,
+            1 => $remaining[0],
+            default => new Group($operator, $remaining),
+        };
+    }
 
-        if (count($remaining) === 1) {
-            return $remaining[0];
-        }
-
-        return $operator === 'AND' ? Filter::all(...$remaining) : Filter::any(...$remaining);
+    private static function negate(Condition|Group|Exists|bool $part): Group|bool
+    {
+        return is_bool($part) ? !$part : new Group(FilterOperator::Not, [$part]);
     }
 
     /** @return array{string, string} */
-    private function parseCondition(string $condition): array
+    private static function parseCondition(string $condition): array
     {
-        $matched = preg_match(
-            '/\A([A-Za-z_][A-Za-z0-9_]*)(?:\s+(=|!=|>=|<=|>|<|NOT\s+LIKE|LIKE|NOT\s+IN|IN))?\z/i',
-            trim($condition),
-            $matches,
-        );
-
-        if ($matched !== 1) {
+        if (preg_match(self::CONDITION, trim($condition), $matches) !== 1) {
             throw new InvalidArgumentException('Unsupported condition: ' . $condition);
         }
 
@@ -185,7 +143,7 @@ final class PredicateCompiler
         return [$matches[1], $operator];
     }
 
-    private function validateValue(string $operator, mixed $value): void
+    private static function validateValue(string $field, string $type, string $operator, mixed $value): void
     {
         if ($operator === 'IN' || $operator === 'NOT IN') {
             if (!is_array($value)) {
@@ -196,6 +154,7 @@ final class PredicateCompiler
                 if ($element === null || is_array($element)) {
                     throw new InvalidArgumentException('IN values cannot contain NULL or nested arrays.');
                 }
+                FieldValue::assert($field, $type, $element);
             }
 
             return;
@@ -205,181 +164,109 @@ final class PredicateCompiler
             throw new InvalidArgumentException('Array values require an explicit IN or NOT IN operator.');
         }
 
-        if ($value === null && $operator !== '=' && $operator !== '!=') {
-            throw new InvalidArgumentException('NULL is only supported with = or !=.');
-        }
-    }
-
-    /** @param array<string, mixed>|Filter|bool $criteria */
-    private function countParameters(array|Filter|bool $criteria): int
-    {
-        if (is_bool($criteria)) {
-            return 0;
-        }
-
-        $count = 0;
-        if ($criteria instanceof Filter) {
-            foreach ($criteria->parts as $part) {
-                $count += $this->countParameters($part);
-            }
-        } else {
-            foreach ($criteria as $value) {
-                $count += is_array($value) ? count($value) : ($value === null ? 0 : 1);
-            }
-        }
-
-        return $count;
-    }
-
-    /** @param array<string, mixed>|Filter $criteria */
-    private function render(array|Filter $criteria, Mapping $mapping, ?FieldResolver $fields): string
-    {
-        if ($criteria instanceof Filter) {
-            if ($criteria->operator === 'RELATED') {
-                $context = $this->relatedQueries[$criteria];
-                if ($criteria->parts[0] !== []) {
-                    $context['query']->andWhere(
-                        $this->render($criteria->parts[0], $context['mapping'], $context['fields']),
-                    );
-                }
-
-                return 'EXISTS (' . $context['query']->getSQL() . ')';
+        if ($value === null) {
+            if ($operator !== '=' && $operator !== '!=') {
+                throw new InvalidArgumentException('NULL is only supported with = or !=.');
             }
 
-            if ($criteria->operator === 'NOT') {
-                return 'NOT (' . $this->render($criteria->parts[0], $mapping, $fields) . ')';
-            }
-
-            $parts = [];
-            foreach ($criteria->parts as $part) {
-                $parts[] = $this->render($part, $mapping, $fields);
-            }
-
-            return '(' . implode(' ' . $criteria->operator . ' ', $parts) . ')';
-        }
-
-        $parts = [];
-        foreach ($criteria as $condition => $value) {
-            [$column, $operator] = $this->parseCondition($condition);
-            $field = $fields?->expression($column) ?? $this->connection->quoteIdentifier($column);
-            if ($fields === null && $this->alias !== null) {
-                $field = $this->connection->quoteIdentifier($this->alias) . '.' . $field;
-            }
-
-            if ($value === null) {
-                $parts[] = $field . ($operator === '=' ? ' IS NULL' : ' IS NOT NULL');
-                continue;
-            }
-
-            $type = $this->columnType($mapping, $column);
-            if (is_array($value)) {
-                $parameters = [];
-                foreach ($value as $element) {
-                    $parameters[] = $this->bind($element, $type);
-                }
-
-                $parts[] = $field . ' ' . $operator . ' (' . implode(', ', $parameters) . ')';
-            } else {
-                $parts[] = $field . ' ' . $operator . ' ' . $this->bind($value, $type);
-            }
-        }
-
-        return count($parts) === 1 ? $parts[0] : '(' . implode(' AND ', $parts) . ')';
-    }
-
-    /** @param array<string, mixed>|Filter|bool $criteria */
-    private function prepareFields(array|Filter|bool $criteria, Mapping $mapping, ?FieldResolver $fields): void
-    {
-        if ($fields === null || is_bool($criteria)) {
             return;
         }
 
-        // Resolve surviving fields before counting parameters: locale joins also bind values.
-        if ($criteria instanceof Filter) {
-            if ($criteria->operator === 'RELATED') {
-                $context = $this->prepareRelated($criteria, $mapping, $fields);
-                $this->relatedQueries[$criteria] = $context;
-                $this->prepareFields($criteria->parts[0], $context['mapping'], $context['fields']);
-
-                return;
-            }
-
-            foreach ($criteria->parts as $part) {
-                $this->prepareFields($part, $mapping, $fields);
-            }
-        } else {
-            foreach ($criteria as $condition => $value) {
-                [$column] = $this->parseCondition($condition);
-                $fields->expression($column);
-            }
-        }
+        FieldValue::assert($field, $type, $value);
     }
 
-    /** @return array{query: QueryBuilder, fields: FieldResolver, mapping: Mapping} */
-    private function prepareRelated(Filter $criteria, Mapping $mapping, FieldResolver $parentFields): array
+    private static function countValues(Condition|Group|Exists $predicate): int
     {
-        $target = $this->relatedMappings[$criteria];
-        $relation = $mapping->relation($criteria->relation);
+        return match (true) {
+            $predicate instanceof Condition => is_array($predicate->value)
+                ? count($predicate->value)
+                : ($predicate->value === null ? 0 : 1),
+            $predicate instanceof Group => array_sum(array_map(self::countValues(...), $predicate->parts)),
+            default => $predicate->criteria === null ? 0 : self::countValues($predicate->criteria),
+        };
+    }
+
+    private function render(Condition|Group|Exists $predicate, ?FieldResolver $fields): string
+    {
+        if ($predicate instanceof Exists) {
+            assert($fields !== null, 'Relation predicates are normalized only in read mode.');
+
+            return $this->renderExists($predicate, $fields);
+        }
+
+        if ($predicate instanceof Group) {
+            $parts = [];
+            foreach ($predicate->parts as $part) {
+                $parts[] = $this->render($part, $fields);
+            }
+
+            return match ($predicate->operator) {
+                FilterOperator::Not => 'NOT (' . $parts[0] . ')',
+                FilterOperator::Any => '(' . implode(' OR ', $parts) . ')',
+                default => '(' . implode(' AND ', $parts) . ')',
+            };
+        }
+
+        $field = $fields?->expression($predicate->field) ?? $this->db->quote($predicate->field);
+        if ($predicate->value === null) {
+            return $field . ($predicate->operator === '=' ? ' IS NULL' : ' IS NOT NULL');
+        }
+
+        if (!is_array($predicate->value)) {
+            return $field . ' ' . $predicate->operator . ' ' . $this->bind($predicate->value, $predicate->type);
+        }
+
+        $parameters = [];
+        foreach ($predicate->value as $element) {
+            $parameters[] = $this->bind($element, $predicate->type);
+        }
+
+        return $field . ' ' . $predicate->operator . ' (' . implode(', ', $parameters) . ')';
+    }
+
+    private function renderExists(Exists $exists, FieldResolver $parent): string
+    {
         $number = ++$this->relationIndex;
-        $prefix = $this->fields?->baseAlias() ?? $this->alias ?? 'br_base';
+        // Every subquery alias derives from the root alias, so nested aliases stay short and unique.
+        $prefix = ($this->fields ?? $parent)->alias();
         $alias = $prefix . '_related' . $number;
-        $parentAlias = $parentFields->baseAlias() ?? $mapping->table;
-        $query = $this->connection->createQueryBuilder()->select('1')
-            ->from($this->connection->quoteIdentifier($target->table), $alias);
-        $fields = new FieldResolver(
-            $this->connection,
-            $target,
-            $query,
-            $parentFields->locale(),
-            alias: $alias,
-            parameters: $this->builder,
-        );
+        $target = $exists->target;
+        $owner = $exists->owner;
+        $relation = $exists->relation;
+        $query = $this->db->connection->createQueryBuilder()->select('1')
+            ->from($this->db->quote($target->table), $alias);
+        $fields = new FieldResolver($this->db, $target, $query, $alias, $parent->locale(), $this->builder);
 
         if ($relation instanceof BelongsToMany) {
-            $pivotAlias = $prefix . '_pivot' . $number;
+            $pivot = $prefix . '_pivot' . $number;
             $query->innerJoin(
                 $alias,
-                $this->connection->quoteIdentifier($relation->pivotTable),
-                $pivotAlias,
-                $this->qualified($alias, $target->primaryKey)
-                    . ' = ' . $this->qualified($pivotAlias, $relation->relatedPivotKey),
+                $this->db->quote($relation->pivotTable),
+                $pivot,
+                $this->db->qualified($alias, $target->primaryKey)
+                    . ' = ' . $this->db->qualified($pivot, $relation->relatedPivotKey),
             );
             $query->where(
-                $this->qualified($parentAlias, $mapping->primaryKey)
-                    . ' = ' . $this->qualified($pivotAlias, $relation->foreignPivotKey),
+                $this->db->qualified($parent->alias(), $owner->primaryKey)
+                    . ' = ' . $this->db->qualified($pivot, $relation->foreignPivotKey),
             );
-        } elseif ($relation instanceof BelongsTo) {
-            $query->where(
-                $this->qualified($alias, $target->primaryKey)
-                    . ' = ' . $this->qualified($parentAlias, $relation->foreignKey),
-            );
-        } elseif ($relation instanceof HasOne || $relation instanceof HasMany) {
-            $query->where(
-                $this->qualified($parentAlias, $mapping->primaryKey)
-                    . ' = ' . $this->qualified($alias, $relation->foreignKey),
-            );
+        } else {
+            $query->where($relation->keyCondition(
+                $this->db->qualified($parent->alias(), $relation->ownerKey($owner)),
+                $this->db->qualified($alias, $relation->targetKey($target)),
+            ));
         }
 
-        if ($target->softDeleteColumn !== null && $criteria->visibility !== Visibility::All) {
-            $query->andWhere(
-                $fields->expression($target->softDeleteColumn)
-                    . ($criteria->visibility === Visibility::Deleted ? ' IS NOT NULL' : ' IS NULL'),
-            );
+        $visibility = SoftDelete::condition($target, $exists->visibility, $fields->expression(...));
+        if ($visibility !== null) {
+            $query->andWhere($visibility);
         }
 
-        return ['query' => $query, 'fields' => $fields, 'mapping' => $target];
-    }
+        if ($exists->criteria !== null) {
+            $query->andWhere($this->render($exists->criteria, $fields));
+        }
 
-    private function qualified(string $alias, string $column): string
-    {
-        return $this->connection->quoteIdentifier($alias) . '.' . $this->connection->quoteIdentifier($column);
-    }
-
-    private function columnType(Mapping $mapping, string $column): string
-    {
-        return $this->fields === null
-            ? $mapping->columnType($column)
-            : $mapping->fieldType($column);
+        return 'EXISTS (' . $query->getSQL() . ')';
     }
 
     private function bind(mixed $value, string $type): string
