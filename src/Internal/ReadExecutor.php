@@ -6,6 +6,7 @@ namespace Solo\Repository\Internal;
 
 use Closure;
 use Doctrine\DBAL\Query\QueryBuilder;
+use Generator;
 use InvalidArgumentException;
 use Solo\Repository\Filter;
 use Solo\Repository\Mapping;
@@ -131,13 +132,12 @@ final readonly class ReadExecutor
     /**
      * Targets whose key column holds one of the integer keys; the loader matches them in PHP.
      *
+     * @param QueryBuilder $prepared A selectAll() read of this target; it is cloned, not changed.
      * @param non-empty-list<int|string> $keys
-     * @param array<string, mixed>|Filter $criteria
-     * @param array<string, string> $orderBy
      */
-    public function selectWhereIn(string $column, array $keys, array|Filter $criteria, array $orderBy): QueryBuilder
+    public function selectWhereIn(QueryBuilder $prepared, string $column, array $keys): QueryBuilder
     {
-        $query = $this->selectAll($criteria, $orderBy);
+        $query = clone $prepared;
 
         return $query->andWhere($this->db->inList(
             $query,
@@ -151,19 +151,17 @@ final readonly class ReadExecutor
      * Joins owners so that string keys match under the database collation; every row also selects
      * the canonical key of its owner. See joinedRecords().
      *
+     * @param QueryBuilder $prepared A selectAll() read of this target; it is cloned, not changed.
      * @param ReadExecutor<object> $owner
      * @param non-empty-list<int|string> $ownerIds
-     * @param array<string, mixed>|Filter $criteria
-     * @param array<string, string> $orderBy
      */
     public function selectJoined(
+        QueryBuilder $prepared,
         Relation $relation,
         ReadExecutor $owner,
         array $ownerIds,
-        array|Filter $criteria,
-        array $orderBy,
     ): QueryBuilder {
-        $query = $this->selectAll($criteria, $orderBy);
+        $query = clone $prepared;
         $ownerMapping = $owner->mapping();
         $ownerKey = $this->db->qualified('br_owner', $ownerMapping->primaryKey);
         $query->innerJoin(
@@ -238,20 +236,18 @@ final readonly class ReadExecutor
     /**
      * Keeps each owner's entire collection in one ordered SQL result, even with large fan-out.
      *
+     * @param QueryBuilder $prepared A selectAll() read of this target; it is cloned, not changed.
      * @param BelongsToMany<object, object> $via
      * @param ReadExecutor<object> $owner
      * @param non-empty-list<int|string> $ownerIds
-     * @param array<string, mixed>|Filter $criteria
-     * @param array<string, string> $orderBy
      */
     public function selectLinked(
+        QueryBuilder $prepared,
         BelongsToMany $via,
         ReadExecutor $owner,
         array $ownerIds,
-        array|Filter $criteria,
-        array $orderBy,
     ): QueryBuilder {
-        $query = $this->selectAll($criteria, $orderBy);
+        $query = clone $prepared;
         $ownerMapping = $owner->mapping();
         $ownerKey = $this->db->qualified('br_link_owner', $ownerMapping->primaryKey);
         $query->andWhere('EXISTS (SELECT 1 FROM ' . $this->db->quote($via->pivotTable)
@@ -281,19 +277,27 @@ final readonly class ReadExecutor
         }
     }
 
+    /** @return list<array<string, mixed>> */
+    public function convertedRows(QueryBuilder $query): array
+    {
+        $rows = [];
+        foreach ($this->releasedRows($query) as $row) {
+            $rows[] = $this->mapper->convert($row);
+        }
+
+        return $rows;
+    }
+
     /**
-     * Converted rows and their models, as relation loading needs them. Each fetched row is
-     * released once it is converted.
+     * Converted rows and their models, as relation loading needs them.
      *
      * @return list<Record<T>>
      */
     public function records(QueryBuilder $query): array
     {
-        $rows = $this->fetchRows($query);
         $records = [];
-        for ($index = 0, $count = count($rows); $index < $count; ++$index) {
-            $row = $this->mapper->convert($rows[$index]);
-            unset($rows[$index]);
+        foreach ($this->releasedRows($query) as $row) {
+            $row = $this->mapper->convert($row);
             $records[] = new Record($row, $this->mapper->hydrate($row));
         }
 
@@ -301,17 +305,14 @@ final readonly class ReadExecutor
     }
 
     /**
-     * Models of a read without relation loads. Each fetched row is released once its model exists.
+     * Models of a read without relation loads.
      *
      * @return list<T>
      */
     public function entities(QueryBuilder $query): array
     {
-        $rows = $this->fetchRows($query);
         $entities = [];
-        for ($index = 0, $count = count($rows); $index < $count; ++$index) {
-            $row = $rows[$index];
-            unset($rows[$index]);
+        foreach ($this->releasedRows($query) as $row) {
             $entities[] = $this->mapper->hydrate($this->mapper->convert($row));
         }
 
@@ -329,7 +330,7 @@ final readonly class ReadExecutor
         $ownerColumn = $this->ownerColumn();
         $records = [];
         $pairs = [];
-        foreach ($this->fetchRows($query) as $row) {
+        foreach ($this->releasedRows($query) as $row) {
             $ownerKey = RowMapper::key($owner->mapper()->rowId($row[$ownerColumn]));
             $key = RowMapper::key($this->mapper->rowId($row[$this->mapping->primaryKey]));
             if (!isset($records[$key])) {
@@ -341,6 +342,23 @@ final readonly class ReadExecutor
         }
 
         return [array_values($records), $pairs];
+    }
+
+    /**
+     * The fetched rows one at a time. The whole result is fetched and freed before the first row,
+     * and each row is released once the caller moves on, so raw rows do not pile up next to
+     * what is built from them.
+     *
+     * @return Generator<int, array<string, mixed>>
+     */
+    private function releasedRows(QueryBuilder $query): Generator
+    {
+        $rows = $this->fetchRows($query);
+        for ($index = 0, $count = count($rows); $index < $count; ++$index) {
+            $row = $rows[$index];
+            unset($rows[$index]);
+            yield $row;
+        }
     }
 
     /** The owner key column of a joined result, named apart from every mapped field. */

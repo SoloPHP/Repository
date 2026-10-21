@@ -196,7 +196,7 @@ final readonly class ReadQuery
             return [];
         }
 
-        return array_map($this->executor->mapper()->convert(...), $this->executor->fetchRows($query));
+        return $this->executor->convertedRows($query);
     }
 
     /**

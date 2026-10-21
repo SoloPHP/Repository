@@ -26,14 +26,12 @@ final readonly class RelationLoader
             $relation = $mapping->relation($name);
             $target = $relation->resolve($mapping);
             $executor = new ReadExecutor($this->db, $target, $node->load->visibility, $inherited);
-            $orderBy = $node->load->orderBy ?: $relation->orderBy;
-            $query = $executor->selectAll($node->load->criteria, $orderBy);
+            $query = $executor->selectAll($node->load->criteria, $node->load->orderBy ?: $relation->orderBy);
 
             $prepared[] = new PreparedLoad(
                 $relation,
                 $executor,
-                $node->load->criteria,
-                $orderBy,
+                $query,
                 $this->prepare($target, $node->children, $executor->locale()),
                 $this->db->keyBatchSize(count($query->getParameters())),
             );
@@ -113,7 +111,7 @@ final readonly class RelationLoader
         $groups = [];
         foreach (array_chunk(array_values($values), $load->batchSize) as $chunk) {
             $related = $target->records(
-                $target->selectWhereIn($targetColumn, $chunk, $load->criteria, $load->orderBy),
+                $target->selectWhereIn($load->query, $targetColumn, $chunk),
             );
             $this->load($target, $related, $load->children);
             foreach ($related as $record) {
@@ -137,7 +135,7 @@ final readonly class RelationLoader
         $groups = [];
         foreach (array_chunk($this->ownerIds($owner, $owners, $ownerColumn), $load->batchSize) as $chunk) {
             [$related, $pairs] = $target->joinedRecords(
-                $target->selectJoined($load->relation, $owner, $chunk, $load->criteria, $load->orderBy),
+                $target->selectJoined($load->query, $load->relation, $owner, $chunk),
                 $owner,
             );
             $this->load($target, $related, $load->children);
@@ -174,13 +172,7 @@ final readonly class RelationLoader
                 continue;
             }
 
-            $related = $target->records($target->selectLinked(
-                $relation,
-                $owner,
-                $chunk,
-                $load->criteria,
-                $load->orderBy,
-            ));
+            $related = $target->records($target->selectLinked($load->query, $relation, $owner, $chunk));
             $this->load($target, $related, $load->children);
             $primaryKey = $target->mapping()->primaryKey;
             foreach ($related as $record) {
