@@ -245,20 +245,21 @@ Obtain the store from `$repository->translations()`:
 
 ```php
 TranslationStore::get(int|string $id, string $locale): ?array; // array<string, string|null>|null
+TranslationStore::all(int|string $id): array; // array<string, array<string, string|null>> by locale
 TranslationStore::save(int|string $id, string $locale, array $patch): void;
 TranslationStore::seed(int|string $id, array $locales, array $values): int; // list<string> locales
 TranslationStore::delete(int|string $id, string $locale): int;
 ```
 
-`get()` reads only the requested locale, without fallback, and returns all configured translated fields. NULL means no translation row; an existing row whose fields are all NULL returns an array. `save()` accepts `array<string, string|null>` restricted to translated fields:
+`get()` reads only the requested locale, without fallback, and returns all configured translated fields. NULL means no translation row; an existing row whose fields are all NULL returns an array. `all()` returns every stored locale of one owner with the same fields, keyed by locale in ascending order, or an empty array. `save()` accepts `array<string, string|null>` restricted to translated fields:
 
 - Existing row: update only fields present in the patch.
-- New row: omitted configured fields become NULL, even if their database columns have defaults.
+- New row: omitted configured fields take their column defaults. A column without a default gets NULL, which leaves the field to the fallback locale when reading.
 - Empty patch: validate ID and locale, then execute no SQL.
 
 Each nonempty save performs one native upsert, without reading or hydrating the owner. It is implemented for PostgreSQL/SQLite with `ON CONFLICT`, and MySQL/MariaDB with `ON DUPLICATE KEY UPDATE`. Other platforms are rejected.
 
-`seed()` fills locales that have no translation yet, for example every active locale of a new entity, and returns the number of rows inserted. Existing rows are left unchanged, so seeding can be repeated. Values follow the `save()` rules, and omitted fields of a new row are NULL. Duplicate locales collapse; an empty locale list or empty values execute no SQL. Only a conflict on the `(foreignKey, localeColumn)` pair is skipped: `ON CONFLICT ... DO NOTHING` on PostgreSQL/SQLite and a no-op `ON DUPLICATE KEY UPDATE` on MySQL/MariaDB, which reports existing rows as unchanged unless the connection enables `CLIENT_FOUND_ROWS`. Seeds larger than the parameter budget are split inside one transaction.
+`seed()` fills locales that have no translation yet, for example every active locale of a new entity, and returns the number of rows inserted. Existing rows are left unchanged, so seeding can be repeated. Values follow the `save()` rules, and omitted fields of a new row take their column defaults. Duplicate locales collapse; an empty locale list or empty values execute no SQL. Only a conflict on the `(foreignKey, localeColumn)` pair is skipped: `ON CONFLICT ... DO NOTHING` on PostgreSQL/SQLite and a no-op `ON DUPLICATE KEY UPDATE` on MySQL/MariaDB, which reports existing rows as unchanged unless the connection enables `CLIENT_FOUND_ROWS`. Seeds larger than the parameter budget are split inside one transaction.
 
 `delete()` removes one owner/locale pair and returns affected rows. These operations address physical owners, including soft-deleted owners, and participate in the caller's connection transaction. Database constraint errors propagate.
 

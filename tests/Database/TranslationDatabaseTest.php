@@ -84,14 +84,14 @@ final class TranslationDatabaseTest extends DatabaseTestCase
         self::assertSame(['name' => 'Seeded', 'description' => 'Text'], $this->store->get($this->firstId, 'uk'));
     }
 
-    public function testNativeUpsertIsOneStatementAndAppliesPatchAndExplicitNullDefaults(): void
+    public function testNativeUpsertIsOneStatementAndAppliesPatchAndColumnDefaults(): void
     {
         $this->store->save($this->firstId, 'en', ['description' => 'Initial']);
 
         self::assertCount(1, $this->log->queries);
         self::assertStringStartsWith('INSERT INTO', $this->log->queries[0]['sql']);
         self::assertSame([], $this->log->selects());
-        self::assertSame(['name' => null, 'description' => 'Initial'], $this->store->get($this->firstId, 'en'));
+        self::assertSame(['name' => 'database-name', 'description' => 'Initial'], $this->store->get($this->firstId, 'en'));
 
         $this->log->reset();
         $this->store->save((string) $this->firstId, 'en', ['name' => 'Стіл']);
@@ -110,7 +110,8 @@ final class TranslationDatabaseTest extends DatabaseTestCase
         $this->store->save($this->firstId, 'en', ['name' => 'Charlie', 'description' => 'English first']);
         $this->store->save($this->firstId, 'uk', ['name' => 'Alpha']);
         $this->store->save($this->secondId, 'en', ['name' => 'Bravo', 'description' => 'English second']);
-        $this->store->save($this->secondId, 'uk', ['description' => 'Ukrainian second']);
+        // An explicit NULL, because an omitted name would take the column default instead of falling back.
+        $this->store->save($this->secondId, 'uk', ['name' => null, 'description' => 'Ukrainian second']);
         $this->store->save($this->thirdId, 'en', ['name' => 'Alpha']);
         $this->store->save($this->thirdId, 'uk', ['name' => 'Charlie']);
 

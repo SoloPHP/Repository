@@ -350,12 +350,13 @@ $translations = $products->translations();
 $translations->save($id, 'uk', ['name' => 'Стілець']);
 $translations->save($id, 'uk', ['description' => null]);
 $ownTranslation = $translations->get($id, 'uk'); // All translated fields, no fallback.
+$everyLocale = $translations->all($id); // ['en' => [...], 'uk' => [...]]
 $deletedRows = $translations->delete($id, 'uk'); // Only this owner/locale.
 ```
 
-`save()` is one atomic native upsert and returns void. Existing omitted fields remain unchanged. On a new row, omitted translated fields are explicitly NULL, even if the database column has a DEFAULT. Values must be string or NULL; unknown/protected fields are rejected rather than silently ignored. An empty patch validates ID/locale and performs no SQL. `get()` returns NULL only when the row is missing; an existing all-NULL translation returns an array.
+`save()` is one atomic native upsert and returns void. Existing omitted fields remain unchanged. On a new row, omitted translated fields take the column default, which is NULL for a column without one. Values must be string or NULL; unknown/protected fields are rejected rather than silently ignored. An empty patch validates ID/locale and performs no SQL. `get()` returns NULL only when the row is missing; an existing all-NULL translation returns an array.
 
-`seedTranslations($id, $locales, $values)` becomes `$translations->seed($id, $locales, $values)`. It inserts a row for every locale that has none and leaves existing rows unchanged, so it is safe to repeat; it returns the number of inserted rows. Unlike v3, omitted translated fields of a new row are NULL, as with `save()`, and only a conflict on the `(foreignKey, localeColumn)` pair is skipped: `INSERT IGNORE` is not used, so FK and other constraint errors still propagate. Do not replace seeding with a loop of `save()`: it would overwrite existing translations.
+`seedTranslations($id, $locales, $values)` becomes `$translations->seed($id, $locales, $values)`. It inserts a row for every locale that has none and leaves existing rows unchanged, so it is safe to repeat; it returns the number of inserted rows. As with `save()`, omitted translated fields of a new row take their column defaults, and only a conflict on the `(foreignKey, localeColumn)` pair is skipped: `INSERT IGNORE` is not used, so FK and other constraint errors still propagate. Do not replace seeding with a loop of `save()`: it would overwrite existing translations.
 
 ## 7. Replace relation definitions and setters
 
