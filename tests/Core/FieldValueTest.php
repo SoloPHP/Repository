@@ -35,6 +35,8 @@ final class FieldValueTest extends TestCase
         yield 'enum string' => [Types::ENUM, 'active'];
         yield 'enum stringable' => [Types::ENUM, self::stringable()];
         yield 'simple array' => [Types::SIMPLE_ARRAY, ['a', 'b']];
+        yield 'decimal range is left to the database' => [Types::DECIMAL, str_repeat('9', 309)];
+        yield 'smallint range is left to the database' => [Types::SMALLINT, 40000];
         yield 'date is left to DBAL' => [Types::DATETIME_IMMUTABLE, '2026-01-01'];
         yield 'json is left to DBAL' => [Types::JSON, false];
     }

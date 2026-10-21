@@ -9,11 +9,13 @@ use InvalidArgumentException;
 use Stringable;
 
 /**
- * Values that a field type binds exactly, in criteria and in written data. Drivers coerce other
- * values without an error: an integer column bound to '1abc' matches or stores 1, and MySQL reads
- * a boolean 'false' as TRUE. Types without a rule go to DBAL unchanged: it rejects mistyped
- * dates, intervals and bcmath numbers itself, while JSON, binary and custom types take their
- * values as they are.
+ * Checks that a value has a form its field type binds as that same value, in criteria and in
+ * written data. Drivers reinterpret other forms without an error: an integer column bound to
+ * '1abc' matches or stores 1, and MySQL reads a boolean 'false' as TRUE. Only the form is
+ * checked: the column's range, precision and scale stay database constraints, so SQLite, which
+ * keeps decimals as REAL, still stores a 309-digit decimal as infinity. Types without a rule go
+ * to DBAL unchanged: it rejects mistyped dates, intervals and bcmath numbers itself, while JSON,
+ * binary and custom types take their values as they are.
  *
  * @internal
  */
@@ -36,7 +38,7 @@ final class FieldValue
                 ),
                 'an integer or a canonical decimal string',
             ],
-            // Plain notation only: an exponent such as '1e999' becomes INF on SQLite.
+            // Plain decimal notation, checked without a float cast so no digits are lost.
             Types::DECIMAL => [
                 is_int($value)
                     || (is_float($value) && is_finite($value))
