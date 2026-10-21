@@ -390,7 +390,7 @@ $relations = [
 
 `$categories` and `$tags` are the `Mapping` objects of the target tables; their own repositories are needed only for writing them. Pass `relations: $relations` when constructing the products mapping. Related rows are read through the products repository's connection, so a read replica or a transaction applies to the whole graph. Lazy target callbacks support cyclic configuration and are checked when the relation is resolved.
 
-`assign` must return the owner object, either the mutated object or a new immutable copy. A legacy void setter needs a wrapper that calls the setter **and returns the owner**. To-one callbacks receive an object or NULL; to-many callbacks receive a list, including an empty list. Every relation definition requires a callback, even if the current caller uses it only for filtering.
+`assign` must return the owner object, either the mutated object or a new immutable copy. A legacy void setter needs a wrapper that calls the setter **and returns the owner**. To-one callbacks receive an object or NULL; to-many callbacks receive a list, including an empty list. A relation used only for filtering (`Filter::related()`) or pivot writes (`links()`) may omit `assign`; loading it then throws before SQL.
 
 `BelongsTo` uses an FK on the owner. `HasOne/HasMany` use an FK on the target; `HasOne` requires that FK to be unique. `BelongsToMany` requires UNIQUE on its pivot pair and both foreign keys. Audit compatible types and matching PK/FK collations, including translations. Alternative-key/composite-key relations, cross-connection graphs and pivot attributes are outside 1.0; model a pivot with business fields as a separate repository.
 

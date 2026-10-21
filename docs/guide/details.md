@@ -255,7 +255,7 @@ delete(int|string $id, string $locale): int;
 
 ## Связи
 
-Определения `BelongsTo`, `HasOne`, `HasMany`, `BelongsToMany` содержат отложенный `target: Closure(): Mapping` и `assign: Closure(entity, related): entity`. В PHPDoc это `callable(TOwner, ?TTarget): TOwner` для to-one и `callable(TOwner, list<TTarget>): TOwner` для to-many. `assign` возвращает исходный объект после setter либо новую immutable-модель. Для to-one аргумент — объект или NULL, для to-many — список, включая пустой.
+Определения `BelongsTo`, `HasOne`, `HasMany`, `BelongsToMany` содержат отложенный `target: Closure(): Mapping` и `assign: Closure(entity, related): entity`. Фабрика `target` вызывается один раз, при первом использовании, и её Mapping запоминается для маппинга-владельца. `assign` можно не указывать у связи, по которой только фильтруют или которой пользуются через `links()`; загрузка такой связи бросает `LogicException` до SQL. В PHPDoc это `callable(TOwner, ?TTarget): TOwner` для to-one и `callable(TOwner, list<TTarget>): TOwner` для to-many. `assign` возвращает исходный объект после setter либо новую immutable-модель. Для to-one аргумент — объект или NULL, для to-many — список, включая пустой.
 
 Описания связей Solo Repository находятся в namespace `Solo\Repository\Relations` (во множественном числе). Namespace `Solo\BaseRepository\Relation` относится к прежнему пакету `solophp/base-repository`.
 

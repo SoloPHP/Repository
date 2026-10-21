@@ -18,7 +18,8 @@ final readonly class BelongsToMany extends Relation
 {
     /**
      * @param callable(): Mapping<TTarget> $target
-     * @param callable(TOwner, list<TTarget>): TOwner $assign
+     * @param (callable(TOwner, list<TTarget>): TOwner)|null $assign NULL when the relation is only
+     *                                                              filtered by or linked.
      * @param array<string, string> $orderBy
      */
     public function __construct(
@@ -26,7 +27,7 @@ final readonly class BelongsToMany extends Relation
         public string $pivotTable,
         public string $foreignPivotKey,
         public string $relatedPivotKey,
-        callable $assign,
+        ?callable $assign = null,
         array $orderBy = [],
     ) {
         Identifier::assert($pivotTable);

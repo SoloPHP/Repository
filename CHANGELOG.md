@@ -18,8 +18,10 @@ Initial release of **Solo Repository** (`solophp/repository`) with the
 - One translation fallback rule for reading, filtering, and sorting;
   native PATCH upserts and insert-missing `seed()` through `TranslationStore`.
 - Four relation types in `Solo\Repository\Relations`, generic over owner and
-  target, with lazy target-`Mapping` factories, nested batch loading, locale
-  inheritance, and explicit per-relation visibility and loading criteria.
+  target, with lazy target-`Mapping` factories called once per owner mapping,
+  nested batch loading, locale inheritance, and explicit per-relation
+  visibility and loading criteria. A relation without `assign` can be filtered
+  by and linked but not loaded.
   A `BelongsTo` target shared by many owners is fetched and hydrated once;
   `HasMany` and `BelongsToMany` accept a default collection order.
 - A bound-parameter budget that follows the platform limit and can be replaced
@@ -28,6 +30,13 @@ Initial release of **Solo Repository** (`solophp/repository`) with the
 - Soft delete with `purge`/`purgeBy`, `lockForUpdate` row locks, transactional
   `insertMany`, and many-to-many `LinkSet` operations.
 - SQLite tests, MySQL 8.4/MariaDB 12.3/PostgreSQL 17 integration tests, and a PHP/DBAL CI matrix.
+
+### Changes since 1.0.0-RC1
+
+- The `assign` callback of a relation is optional. Loading a relation without
+  one throws `LogicException` before SQL.
+- A relation's target factory runs once per owner mapping instead of on every
+  load, filter and link set.
 
 ### Migrating from Base Repository
 

@@ -267,20 +267,20 @@ Each nonempty save performs one native upsert, without reading or hydrating the 
 Import the four concrete definitions from `Solo\Repository\Relations`:
 
 ```php
-BelongsTo::__construct(callable $target, string $foreignKey, callable $assign);
-HasOne::__construct(callable $target, string $foreignKey, callable $assign);
-HasMany::__construct(callable $target, string $foreignKey, callable $assign, array $orderBy = []);
+BelongsTo::__construct(callable $target, string $foreignKey, ?callable $assign = null);
+HasOne::__construct(callable $target, string $foreignKey, ?callable $assign = null);
+HasMany::__construct(callable $target, string $foreignKey, ?callable $assign = null, array $orderBy = []);
 BelongsToMany::__construct(
     callable $target,
     string $pivotTable,
     string $foreignPivotKey,
     string $relatedPivotKey,
-    callable $assign,
+    ?callable $assign = null,
     array $orderBy = [],
 );
 ```
 
-Names/keys are public readonly properties. `target` and `assign` are public readonly closures. The `orderBy` of a to-many definition is the default order of every load of that collection, normalized like `Load::orderBy`; a `Load` with its own non-empty order replaces it. The zero-argument `target` factory returns the target's `Mapping`; it is called lazily, so mappings may reference each other. Related rows are read through the owner repository's connection and parameter budget. Related keys reference primary keys:
+Names/keys are public readonly properties. `target` and `assign` are public readonly closures; `assign` is NULL for a relation that is only filtered by (`Filter::related()`) or linked (`links()`), and loading such a relation throws `LogicException` before SQL. The `orderBy` of a to-many definition is the default order of every load of that collection, normalized like `Load::orderBy`; a `Load` with its own non-empty order replaces it. The zero-argument `target` factory returns the target's `Mapping`; it is called lazily, on first use, so mappings may reference each other. Its result is kept for each owner mapping, so later loads, filters and link sets reuse it, and a factory may build the target `Mapping` itself. Related rows are read through the owner repository's connection and parameter budget. Related keys reference primary keys:
 
 | Definition | Foreign-key location | `assign` signature |
 |---|---|---|

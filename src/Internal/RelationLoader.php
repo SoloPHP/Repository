@@ -6,6 +6,7 @@ namespace Solo\Repository\Internal;
 
 use Solo\Repository\Mapping;
 use Solo\Repository\Relations\BelongsToMany;
+use LogicException;
 use UnexpectedValueException;
 
 /** @internal */
@@ -24,12 +25,16 @@ final readonly class RelationLoader
         $prepared = [];
         foreach ($plan->nodes as $name => $node) {
             $relation = $mapping->relation($name);
+            if ($relation->assign === null) {
+                throw new LogicException(sprintf('Relation "%s" has no assign callback to load into.', $name));
+            }
             $target = $relation->resolve($mapping);
             $executor = new ReadExecutor($this->db, $target, $node->load->visibility, $inherited);
             $query = $executor->selectAll($node->load->criteria, $node->load->orderBy ?: $relation->orderBy);
 
             $prepared[] = new PreparedLoad(
                 $relation,
+                $relation->assign,
                 $executor,
                 $query,
                 $this->prepare($target, $node->children, $executor->locale()),
@@ -70,7 +75,7 @@ final readonly class RelationLoader
                     throw new UnexpectedValueException('A HasOne or BelongsTo relation matched more than one record.');
                 }
                 /** @var mixed $entity */
-                $entity = ($relation->assign)($record->entity, $many ? $group : ($group[0] ?? null));
+                $entity = ($load->assign)($record->entity, $many ? $group : ($group[0] ?? null));
                 if (!is_object($entity)) {
                     throw new UnexpectedValueException('A relation assign callback must return an object.');
                 }

@@ -10,37 +10,60 @@ use Solo\Repository\Internal\KeyType;
 use Solo\Repository\Internal\OrderBy;
 use Solo\Repository\Mapping;
 use UnexpectedValueException;
+use WeakMap;
 
 /**
  * Common base of the four relation definitions; it is not an extension point.
  */
 abstract readonly class Relation
 {
-    /** Lazy factory of the target Mapping. */
+    /** Lazy factory of the target Mapping, called once per owner mapping on first use. */
     public Closure $target;
 
-    /** Receives the owner and the loaded value and returns the owner to keep. */
-    public Closure $assign;
+    /**
+     * Receives the owner and the loaded value and returns the owner to keep. NULL for a relation
+     * that is only filtered by or linked, which cannot be loaded.
+     */
+    public ?Closure $assign;
 
     /** @var array<string, 'ASC'|'DESC'> Default collection order; a Load with its own order replaces it. */
     public array $orderBy;
 
+    /** @var WeakMap<Mapping<object>, Mapping<object>> */
+    private WeakMap $resolved;
+
     /** @param array<mixed> $orderBy */
-    protected function __construct(callable $target, callable $assign, array $orderBy = [])
+    protected function __construct(callable $target, ?callable $assign, array $orderBy = [])
     {
         $this->target = Closure::fromCallable($target);
-        $this->assign = Closure::fromCallable($assign);
+        $this->assign = $assign === null ? null : Closure::fromCallable($assign);
         $this->orderBy = OrderBy::normalize($orderBy);
+        $this->resolved = new WeakMap();
     }
 
     /**
-     * Calls the target factory and checks the relation keys against both mappings.
+     * The target Mapping with the relation keys checked against both mappings. The factory runs
+     * once per owner mapping; later calls reuse its result.
      *
      * @internal
      * @param Mapping<object> $owner
      * @return Mapping<object>
      */
     public function resolve(Mapping $owner): Mapping
+    {
+        // offsetSet() changes the map, not the readonly property that holds it.
+        if (!isset($this->resolved[$owner])) {
+            $this->resolved->offsetSet($owner, $this->resolveTarget($owner));
+        }
+
+        return $this->resolved[$owner];
+    }
+
+    /**
+     * @param Mapping<object> $owner
+     * @return Mapping<object>
+     */
+    private function resolveTarget(Mapping $owner): Mapping
     {
         if (
             !$this instanceof BelongsTo

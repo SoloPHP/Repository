@@ -4,11 +4,14 @@ declare(strict_types=1);
 
 namespace Solo\Repository\Tests\Core;
 
+use Closure;
 use Doctrine\DBAL\DriverManager;
 use Doctrine\DBAL\Types\Types;
 use InvalidArgumentException;
+use LogicException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use Solo\Repository\Filter;
 use Solo\Repository\Mapping;
 use Solo\Repository\Relations\BelongsTo;
 use Solo\Repository\Relations\BelongsToMany;
@@ -56,6 +59,37 @@ final class RelationMetadataTest extends TestCase
         self::assertSame($target, $owner->relation('target')->resolve($owner));
         self::assertSame(1, $calls);
         self::assertSame($owner, $target->relation('owners')->resolve($target));
+    }
+
+    public function testTargetFactoryRunsOnceForLoadsFiltersAndLinks(): void
+    {
+        $calls = 0;
+        $posts = $this->postsWithTags(
+            static function (object $post, array $tags): object {
+                $post->tags = $tags;
+                return $post;
+            },
+            $calls,
+        );
+
+        $posts->links('tags')->attach(1, [1, 2]);
+        self::assertCount(2, $posts->with(['tags'])->find(1)->tags);
+        self::assertCount(2, $posts->with(['tags'])->findBy()[0]->tags);
+        self::assertTrue($posts->read()->exists(Filter::related('tags', ['id' => 2])));
+        self::assertSame(1, $calls);
+    }
+
+    public function testRelationWithoutAssignFiltersAndLinksButCannotBeLoaded(): void
+    {
+        $calls = 0;
+        $posts = $this->postsWithTags(null, $calls);
+
+        $posts->links('tags')->attach(1, [2]);
+        self::assertTrue($posts->read()->exists(Filter::related('tags', ['id' => 2])));
+
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage('Relation "tags" has no assign callback to load into.');
+        $posts->with(['tags'])->find(1);
     }
 
     public function testBelongsToRequiresAnOwnersPhysicalColumnBeforeResolution(): void
@@ -268,5 +302,32 @@ final class RelationMetadataTest extends TestCase
             'owner_id OR 1=1',
             static fn (object $entity, mixed $related): object => $entity,
         );
+    }
+
+    /** @param int $calls Counts target factory calls. */
+    private function postsWithTags(?Closure $assign, int &$calls): Repository
+    {
+        $connection = DriverManager::getConnection(['driver' => 'pdo_sqlite', 'memory' => true]);
+        $connection->executeStatement('CREATE TABLE posts (id INTEGER PRIMARY KEY)');
+        $connection->executeStatement('CREATE TABLE tags (id INTEGER PRIMARY KEY)');
+        $connection->executeStatement('CREATE TABLE post_tag (post_id INTEGER, tag_id INTEGER, UNIQUE(post_id, tag_id))');
+        $connection->executeStatement('INSERT INTO posts (id) VALUES (1)');
+        $connection->executeStatement('INSERT INTO tags (id) VALUES (1), (2)');
+
+        return new Repository($connection, new Mapping(
+            'posts',
+            ['id' => Types::INTEGER],
+            static fn (array $row): object => (object) $row,
+            relations: ['tags' => new BelongsToMany(
+                static function () use (&$calls): Mapping {
+                    $calls++;
+                    return new Mapping('tags', ['id' => Types::INTEGER], static fn (array $row): object => (object) $row);
+                },
+                'post_tag',
+                'post_id',
+                'tag_id',
+                $assign,
+            )],
+        ));
     }
 }
