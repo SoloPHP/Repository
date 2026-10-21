@@ -224,8 +224,9 @@ final class PredicateCompilerTest extends TestCase
         $boolean = 'Field "enabled" requires a boolean, 0 or 1.';
         yield 'boolean word' => [['enabled' => 'false'], $boolean];
         yield 'boolean two' => [['enabled' => 2], $boolean];
-        $number = 'Field "price" requires a number or a numeric string.';
+        $number = 'Field "price" requires a finite number or a decimal string.';
         yield 'decimal letters' => [['price >=' => 'cheap'], $number];
+        yield 'decimal exponent' => [['price <' => '1e999'], $number];
         yield 'decimal infinity' => [['price <' => INF], $number];
         yield 'decimal boolean' => [['price' => false], $number];
         $string = 'Field "name" requires a string, an integer or a Stringable.';

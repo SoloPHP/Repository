@@ -196,7 +196,7 @@ final class RepositoryTest extends TestCase
                 fn () => $this->repository->insertMany([['sku' => 'first'], ['sku' => 1.5]]),
             ],
             [
-                'Field "amount" requires a number or a numeric string.',
+                'Field "amount" requires a finite number or a decimal string.',
                 fn () => $this->repository->update($id, ['amount' => 'abc']),
             ],
             [
