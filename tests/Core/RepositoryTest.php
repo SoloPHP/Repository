@@ -6,6 +6,7 @@ namespace Solo\Repository\Tests\Core;
 
 use ArrayObject;
 use DateTimeImmutable;
+use Doctrine\DBAL\ArrayParameterType;
 use Doctrine\DBAL\Configuration;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\DriverManager;
@@ -531,9 +532,11 @@ final class RepositoryTest extends TestCase
         // Sorting before the split keeps one key order across statements.
         (new Repository($connection, $this->mapping(), parameterLimit: 2))->lockForUpdate([3, 1, 2]);
 
+        // DBAL expands each key list into one placeholder per key when it executes the statement.
+        $sql = 'SELECT "id" FROM "items" WHERE "id" IN (:dcValue1) ORDER BY "id" FOR UPDATE';
         self::assertSame([
-            ['SELECT "id" FROM "items" WHERE "id" IN (:dcValue1, :dcValue2) ORDER BY "id" FOR UPDATE', [1, 2]],
-            ['SELECT "id" FROM "items" WHERE "id" IN (:dcValue1) ORDER BY "id" FOR UPDATE', [3]],
+            [$sql, [[1, 2]], [ArrayParameterType::INTEGER]],
+            [$sql, [[3]], [ArrayParameterType::INTEGER]],
         ], $statements->getArrayCopy());
     }
 
@@ -544,10 +547,10 @@ final class RepositoryTest extends TestCase
         // A longer IN list can make MySQL scan, and lock, the whole table.
         (new Repository($connection, $this->mapping()))->lockForUpdate(range(5001, 1, -1));
 
-        self::assertSame([range(1, 5000), [5001]], array_column($statements->getArrayCopy(), 1));
+        self::assertSame([[range(1, 5000)], [[5001]]], array_column($statements->getArrayCopy(), 1));
     }
 
-    /** @return array{Connection, ArrayObject<int, array{string, list<mixed>}>} */
+    /** @return array{Connection, ArrayObject<int, array{string, list<mixed>, list<mixed>}>} */
     private function lockingConnection(): array
     {
         $statements = new ArrayObject();
@@ -559,8 +562,8 @@ final class RepositoryTest extends TestCase
             static fn() => new \Doctrine\DBAL\Query\QueryBuilder($connection),
         );
         $connection->method('executeQuery')->willReturnCallback(
-            static function (string $query, array $parameters) use ($statements, $result): Result {
-                $statements[] = [$query, array_values($parameters)];
+            static function (string $query, array $parameters, array $types) use ($statements, $result): Result {
+                $statements[] = [$query, array_values($parameters), array_values($types)];
                 return $result;
             },
         );

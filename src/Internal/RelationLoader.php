@@ -46,7 +46,7 @@ final readonly class RelationLoader
                 $executor,
                 $query,
                 $this->prepare($target, $node->children, $executor->locale()),
-                $this->db->keyBatchSize(count($query->getParameters())),
+                $this->db->keyBatchSize(Database::boundCount($query)),
             );
         }
 

@@ -98,6 +98,30 @@ final class RepositoryDatabaseTest extends DatabaseTestCase
         self::assertEquals($item->occurred_at, $updated->occurred_at);
     }
 
+    public function testTypedInListsMatchOnTheServer(): void
+    {
+        $utc = new DateTimeZone('UTC');
+        $dates = [
+            new DateTimeImmutable('2026-01-02 03:04:05', $utc),
+            new DateTimeImmutable('2026-01-03 03:04:05', $utc),
+            new DateTimeImmutable('2026-01-04 03:04:05', $utc),
+        ];
+        $this->repository->insertMany([
+            ['sku' => 'a', 'amount' => '1.50', 'active' => true, 'occurred_at' => $dates[0]],
+            ['sku' => 'b', 'amount' => '2.00', 'active' => false, 'occurred_at' => $dates[1]],
+            ['sku' => 'c', 'amount' => '3.25', 'active' => true, 'occurred_at' => $dates[2]],
+        ]);
+        $read = $this->repository->read();
+        $skus = static fn (array $criteria): array => array_column(
+            $read->rows(['sku'], $criteria, ['sku' => 'ASC']),
+            'sku',
+        );
+
+        self::assertSame(['a', 'c'], $skus(['occurred_at IN' => [$dates[0], $dates[2]]]));
+        self::assertSame(['b'], $skus(['amount IN' => ['2.00', '9.99']]));
+        self::assertSame(['a', 'c'], $skus(['sku NOT IN' => ['b', 'z'], 'active IN' => [true]]));
+    }
+
     public function testSoftDeleteVisibilityRestorePurgeAndFilteredKeyset(): void
     {
         $repository = new Repository($this->connection, $this->mapping(true));

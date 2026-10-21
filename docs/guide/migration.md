@@ -500,7 +500,7 @@ $total = $query
     ->fetchOne();
 ```
 
-The builder applies the mapping's criteria and visibility only to the mapped table; joined tables and everything else the SQL adds own their soft-delete and locale semantics. V3 criteria keys for joined tables, such as `so.status`, become your own `andWhere()` conditions; `where()` would replace the mapping's criteria and soft-delete condition. Bind values with `createNamedParameter()` and validate/quote dynamic identifiers. Raw DBAL results do not automatically pass through the repository's mapping.
+The builder applies the mapping's criteria and visibility only to the mapped table; joined tables and everything else the SQL adds own their soft-delete and locale semantics. V3 criteria keys for joined tables, such as `so.status`, become your own `andWhere()` conditions; `where()` would replace the mapping's criteria and soft-delete condition. Bind values with `createNamedParameter()` and validate/quote dynamic identifiers. IN criteria are one DBAL list parameter, so run the builder itself or pass `getParameterTypes()` with `getParameters()`. Raw DBAL results do not automatically pass through the repository's mapping.
 
 For cache invalidation or outgoing events, decide whether they belong after a successful statement or after the encompassing transaction commits. V3's `afterWrite()` ran before commit and only observed that repository's base-table writes; blindly moving its body after every new call would still miss translation/pivot changes and rollback behavior. Keep that policy in the service orchestrating the workflow; no event bus or unit of work is added.
 

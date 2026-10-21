@@ -30,10 +30,22 @@ Initial release of **Solo Repository** (`solophp/repository`) with the
   `HasMany` and `BelongsToMany` accept a default collection order.
 - A bound-parameter budget that follows the platform limit and can be replaced
   per repository with `parameterLimit`; internal key lists stop at 5,000 keys
-  per statement.
+  per statement. IN lists are bound as one DBAL list parameter.
 - Soft delete with `purge`/`purgeBy`, `lockForUpdate` row locks, transactional
   `insertMany`, and many-to-many `LinkSet` operations.
 - SQLite tests, MySQL 8.4/MariaDB 12.3/PostgreSQL 17 integration tests, and a PHP/DBAL CI matrix.
+
+### Changes since 1.0.0-RC2
+
+- `IN` and `NOT IN` criteria and the key lists of relation loads and
+  `lockForUpdate()` are bound as one DBAL list parameter (`ArrayParameterType`)
+  of values converted through the field type, instead of one named parameter
+  per value. DBAL expands the list into the same SQL when it runs the statement.
+  A type without a DBAL list binding, such as boolean, still binds each value,
+  and the parameter budget still counts every value of a list.
+- **Behavior change:** a `queryBuilder()` with IN criteria holds a list
+  parameter. Run the builder itself, or pass `getParameterTypes()` along with
+  `getParameters()` when its SQL becomes part of another statement.
 
 ### Changes since 1.0.0-RC1
 
