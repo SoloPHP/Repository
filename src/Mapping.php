@@ -8,16 +8,20 @@ use Closure;
 use Doctrine\DBAL\Types\Type;
 use Doctrine\DBAL\Types\Types;
 use InvalidArgumentException;
-use Solo\Repository\Relations\BelongsTo;
+use Solo\Repository\Internal\Identifier;
+use Solo\Repository\Internal\KeyType;
 use Solo\Repository\Relations\Relation;
 
 /**
- * @template T of object
+ * @template-covariant T of object
  */
 final readonly class Mapping
 {
     /** @var Closure(array<string, mixed>): T */
     public Closure $hydrate;
+
+    /** @var array<string, string> */
+    private array $readColumns;
 
     /**
      * @param array<string, string> $columns
@@ -34,8 +38,8 @@ final readonly class Mapping
         public ?Translations $translations = null,
         public array $relations = [],
     ) {
-        self::validateIdentifier($table);
-        self::validateIdentifier($primaryKey);
+        Identifier::assert($table);
+        Identifier::assert($primaryKey);
         self::validateColumns($columns);
         $this->validateRelations($relations);
 
@@ -43,22 +47,19 @@ final readonly class Mapping
             throw new InvalidArgumentException('Translated columns must not overlap with base columns.');
         }
 
-        $primaryType = $this->columnType($primaryKey);
-        $integerTypes = [Types::SMALLINT, Types::INTEGER, Types::BIGINT];
-        $primaryTypes = [...$integerTypes, Types::STRING, Types::ASCII_STRING, Types::GUID];
-
-        if (!in_array($primaryType, $primaryTypes, true)) {
+        $keyType = KeyType::of($this->columnType($primaryKey));
+        if ($keyType === null) {
             throw new InvalidArgumentException(
                 'The primary key must use an integer, string, ASCII string or GUID type.',
             );
         }
 
-        if ($generatedId && !in_array($primaryType, $integerTypes, true)) {
+        if ($generatedId && $keyType !== KeyType::Integer) {
             throw new InvalidArgumentException('Generated IDs require a smallint, integer or bigint primary key.');
         }
 
         if ($softDeleteColumn !== null) {
-            self::validateIdentifier($softDeleteColumn);
+            Identifier::assert($softDeleteColumn);
             $softDeleteType = $this->columnType($softDeleteColumn);
             $dateTimeTypes = [
                 Types::DATETIME_MUTABLE,
@@ -73,6 +74,7 @@ final readonly class Mapping
         }
 
         $this->hydrate = Closure::fromCallable($hydrate);
+        $this->readColumns = $columns + ($translations->columns ?? []);
     }
 
     public function columnType(string $column): string
@@ -86,21 +88,17 @@ final readonly class Mapping
 
     public function fieldType(string $field): string
     {
-        if (array_key_exists($field, $this->columns)) {
-            return $this->columns[$field];
+        if (!array_key_exists($field, $this->readColumns)) {
+            throw new InvalidArgumentException(sprintf('Unknown mapped field "%s".', $field));
         }
 
-        if ($this->translations !== null && array_key_exists($field, $this->translations->columns)) {
-            return $this->translations->columns[$field];
-        }
-
-        throw new InvalidArgumentException(sprintf('Unknown mapped field "%s".', $field));
+        return $this->readColumns[$field];
     }
 
     /** @return array<string, string> */
     public function readColumns(): array
     {
-        return $this->columns + ($this->translations->columns ?? []);
+        return $this->readColumns;
     }
 
     public function relation(string $name): Relation
@@ -121,10 +119,8 @@ final readonly class Mapping
                     'Mapping relations must map relation names to Relation definitions.',
                 );
             }
-            self::validateIdentifier($name);
-            if ($relation instanceof BelongsTo) {
-                $this->columnType($relation->foreignKey);
-            }
+            Identifier::assert($name);
+            $this->columnType($relation->ownerKey($this));
         }
     }
 
@@ -136,20 +132,13 @@ final readonly class Mapping
                 throw new InvalidArgumentException('Mapping columns must be keyed by column names.');
             }
 
-            self::validateIdentifier($column);
+            Identifier::assert($column);
 
             if (!is_string($type) || !Type::hasType($type)) {
                 throw new InvalidArgumentException(
                     sprintf('Column "%s" must use a registered DBAL type name.', $column),
                 );
             }
-        }
-    }
-
-    private static function validateIdentifier(string $identifier): void
-    {
-        if (preg_match('/\A[A-Za-z_][A-Za-z0-9_]*\z/', $identifier) !== 1) {
-            throw new InvalidArgumentException(sprintf('Invalid SQL identifier "%s".', $identifier));
         }
     }
 }

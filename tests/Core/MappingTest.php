@@ -6,17 +6,16 @@ namespace Solo\Repository\Tests\Core;
 
 use Closure;
 use DateTimeImmutable;
-use Doctrine\DBAL\Platforms\SQLitePlatform;
 use Doctrine\DBAL\Types\Type;
 use Doctrine\DBAL\Types\Types;
 use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
-use Solo\Repository\Internal\RowMapper;
 use Solo\Repository\Mapping;
 use Solo\Repository\Tests\Core\Fixtures\MappingHydrator;
 use Solo\Repository\Tests\Core\Fixtures\MappingValue;
 use Solo\Repository\Tests\Core\Fixtures\MappingValueType;
+use Solo\Repository\Tests\Core\Fixtures\SqliteRowMapper;
 use stdClass;
 use UnexpectedValueException;
 
@@ -108,23 +107,23 @@ final class MappingTest extends TestCase
 
     public function testHydrationReceivesDbalConvertedValues(): void
     {
-        $mapper = new RowMapper($this->mapping([
+        $mapper = SqliteRowMapper::for($this->mapping([
             'id' => Types::INTEGER,
             'price' => Types::DECIMAL,
             'created_at' => Types::DATETIME_IMMUTABLE,
             'active' => Types::BOOLEAN,
             'attributes' => Types::JSON,
             'deleted_at' => Types::DATETIME_IMMUTABLE,
-        ]), new SQLitePlatform());
+        ]));
 
-        $product = $mapper->hydrate([
+        $product = $mapper->hydrate($mapper->convert([
             'id' => '42',
             'price' => '19.90',
             'created_at' => '2026-10-20 12:34:56',
             'active' => 0,
             'attributes' => '{"sizes":[1,2],"featured":true}',
             'deleted_at' => null,
-        ]);
+        ]));
 
         self::assertSame(42, $product->id);
         self::assertSame('19.90', $product->price);
@@ -137,11 +136,11 @@ final class MappingTest extends TestCase
 
     public function testPartialRowsConvertOnlyPresentMappedFields(): void
     {
-        $mapper = new RowMapper($this->mapping([
+        $mapper = SqliteRowMapper::for($this->mapping([
             'id' => Types::INTEGER,
             'price' => Types::DECIMAL,
             'created_at' => Types::DATETIME_IMMUTABLE,
-        ]), new SQLitePlatform());
+        ]));
 
         self::assertSame(['price' => '12', 'aggregate' => '3'], $mapper->convert([
             'price' => 12,
@@ -157,12 +156,12 @@ final class MappingTest extends TestCase
             Type::addType($typeName, MappingValueType::class);
         }
 
-        $mapper = new RowMapper($this->mapping([
+        $mapper = SqliteRowMapper::for($this->mapping([
             'id' => Types::INTEGER,
             'code' => $typeName,
-        ]), new SQLitePlatform());
+        ]));
 
-        $product = $mapper->hydrate(['id' => '1', 'code' => 'SKU-001']);
+        $product = $mapper->hydrate($mapper->convert(['id' => '1', 'code' => 'SKU-001']));
 
         self::assertInstanceOf(MappingValue::class, $product->code);
         self::assertSame('SKU-001', $product->code->value);
@@ -172,7 +171,7 @@ final class MappingTest extends TestCase
     public function testNonObjectHydratorResultIsRejected(): void
     {
         $mapping = new Mapping('products', ['id' => Types::INTEGER], static fn (array $row): array => $row);
-        $mapper = new RowMapper($mapping, new SQLitePlatform());
+        $mapper = SqliteRowMapper::for($mapping);
 
         $this->expectException(UnexpectedValueException::class);
         $this->expectExceptionMessage('hydrator must return an object');
@@ -183,7 +182,7 @@ final class MappingTest extends TestCase
     #[DataProvider('validIds')]
     public function testIdsAreNormalizedToTheirMappedType(string $type, int|string $id, int|string $expected): void
     {
-        $mapper = new RowMapper($this->mapping(['id' => $type], false), new SQLitePlatform());
+        $mapper = SqliteRowMapper::for($this->mapping(['id' => $type], false));
 
         self::assertSame($expected, $mapper->id($id));
     }
@@ -207,7 +206,7 @@ final class MappingTest extends TestCase
     #[DataProvider('invalidIds')]
     public function testInvalidIdsAreRejectedBeforeCoercion(string $type, string $id): void
     {
-        $mapper = new RowMapper($this->mapping(['id' => $type], false), new SQLitePlatform());
+        $mapper = SqliteRowMapper::for($this->mapping(['id' => $type], false));
 
         $this->expectException(InvalidArgumentException::class);
 

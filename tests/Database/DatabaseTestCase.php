@@ -13,6 +13,7 @@ use Doctrine\DBAL\Tools\DsnParser;
 use PDO;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
+use Solo\Repository\Tests\Fixtures\QueryLog;
 
 abstract class DatabaseTestCase extends TestCase
 {
@@ -22,11 +23,19 @@ abstract class DatabaseTestCase extends TestCase
     /** @var list<string> */
     private array $createdTables = [];
 
+    /** @var array<string, mixed> */
+    private array $parameters = [];
+
+    /** @var list<Connection> */
+    private array $otherConnections = [];
+
     protected function setUp(): void
     {
         $url = getenv('REPOSITORY_DATABASE_URL');
         if ($url === false || $url === '') {
-            throw new RuntimeException('Set REPOSITORY_DATABASE_URL to a dedicated MySQL or PostgreSQL test database.');
+            throw new RuntimeException(
+                'Set REPOSITORY_DATABASE_URL to a dedicated MySQL, MariaDB or PostgreSQL test database.',
+            );
         }
         $parameters = (new DsnParser(['mysql' => 'pdo_mysql', 'postgresql' => 'pdo_pgsql']))->parse($url);
         if (!in_array($parameters['driver'] ?? null, ['pdo_mysql', 'pdo_pgsql'], true)) {
@@ -40,6 +49,7 @@ abstract class DatabaseTestCase extends TestCase
         if ($parameters['driver'] === 'pdo_mysql') {
             $parameters['charset'] = 'utf8mb4';
         }
+        $this->parameters = $parameters;
         $this->log = new QueryLog();
         $configuration = new Configuration();
         $configuration->setMiddlewares([new Middleware($this->log)]);
@@ -60,8 +70,20 @@ abstract class DatabaseTestCase extends TestCase
         }
     }
 
+    /** Another session on the same database, for observing locks held by the main connection. */
+    protected function otherConnection(): Connection
+    {
+        $connection = DriverManager::getConnection($this->parameters);
+        $this->otherConnections[] = $connection;
+
+        return $connection;
+    }
+
     protected function tearDown(): void
     {
+        foreach ($this->otherConnections as $connection) {
+            $connection->close();
+        }
         if (!isset($this->connection)) {
             return;
         }

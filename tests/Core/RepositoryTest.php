@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Solo\Repository\Tests\Core;
 
+use ArrayObject;
 use DateTimeImmutable;
 use Doctrine\DBAL\Configuration;
 use Doctrine\DBAL\Connection;
@@ -311,9 +312,36 @@ final class RepositoryTest extends TestCase
         for ($i = 0; $i < 1001; $i++) {
             $rows[] = ['sku' => "row-$i", 'active' => true];
         }
-        self::assertSame(1001, $this->repository->insertMany($rows, batchSize: 10000));
+        $repository = new Repository($this->db, $this->mapping(), parameterLimit: 900);
+        self::assertSame(1001, $repository->insertMany($rows, batchSize: 10000));
         self::assertCount(3, $this->log->sql); // floor(900 / 2) rows per statement
         self::assertSame(1001, $this->repository->read()->count());
+    }
+
+    public function testDefaultParameterLimitFollowsTheSqliteVersion(): void
+    {
+        $limit = version_compare($this->db->getServerVersion(), '3.32.0', '>=') ? 32766 : 900;
+        $rows = [];
+        for ($i = 0; $i < 1001; $i++) {
+            $rows[] = ['sku' => "row-$i", 'active' => true];
+        }
+        self::assertSame(1001, $this->repository->insertMany($rows, batchSize: 10000));
+        self::assertCount((int) ceil(1001 / intdiv($limit, 2)), $this->log->sql);
+        self::assertCount(1001, $this->repository->read()->rows(['id'], ['id IN' => range(1, $limit)]));
+
+        $this->log->sql = [];
+        $this->expectException(InvalidArgumentException::class);
+        try {
+            $this->repository->read()->rows(['id'], ['id IN' => range(1, $limit + 1)]);
+        } finally {
+            self::assertSame([], $this->log->sql);
+        }
+    }
+
+    public function testParameterLimitMustBePositive(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        new Repository($this->db, $this->mapping(), parameterLimit: 0);
     }
 
     public function testInsertManyValidatesAllColumnSetsBeforeFirstWrite(): void
@@ -381,15 +409,11 @@ final class RepositoryTest extends TestCase
         $connection = $this->createMock(Connection::class);
         $platform = new PostgreSQLPlatform();
         $connection->method('getDatabasePlatform')->willReturn($platform);
-        $connection->method('quoteIdentifier')->willReturnCallback($platform->quoteIdentifier(...));
-        $connection->method('createQueryBuilder')->willReturnCallback(
-            static fn() => new \Doctrine\DBAL\Query\QueryBuilder($connection),
-        );
         $connection->expects(self::never())->method('lastInsertId');
         $connection->expects(self::once())->method('executeQuery')->with(
-            self::callback(static fn(string $sql): bool => str_ends_with($sql, ' RETURNING "id"')),
-            ['dcValue1' => 'postgres'],
-            ['dcValue1' => Types::STRING],
+            'INSERT INTO "items" ("sku") VALUES (?) RETURNING "id"',
+            ['postgres'],
+            [Types::STRING],
         )->willReturn($result);
 
         $repository = new Repository($connection, $this->mapping());
@@ -405,5 +429,104 @@ final class RepositoryTest extends TestCase
 
         $this->expectException(InvalidArgumentException::class);
         $repository->insertGetId(['id' => 0, 'sku' => 'mysql']);
+    }
+
+    public function testLockForUpdateRequiresATransactionAndLocksDistinctKeysInOrder(): void
+    {
+        try {
+            $this->repository->lockForUpdate(1);
+            self::fail('Row locks outside a transaction end immediately.');
+        } catch (LogicException) {
+            self::assertSame([], $this->log->sql);
+        }
+
+        $this->db->transactional(function (): void {
+            $this->repository->lockForUpdate([3, '1', 1]);
+            $this->repository->lockForUpdate([]);
+        });
+        self::assertSame(['SELECT "id" FROM "items" WHERE "id" IN (?, ?) ORDER BY "id"'], $this->log->sql);
+    }
+
+    #[DataProvider('invalidLockIds')]
+    public function testInvalidLockIdsAreRejectedBeforeSql(mixed $ids): void
+    {
+        $this->db->beginTransaction();
+        $this->expectException(InvalidArgumentException::class);
+        try {
+            $this->repository->lockForUpdate($ids);
+        } finally {
+            self::assertSame([], $this->log->sql);
+            $this->db->rollBack();
+        }
+    }
+
+    public static function invalidLockIds(): iterable
+    {
+        yield 'noncanonical' => ['01'];
+        yield 'nested' => [[[1]]];
+        yield 'associative' => [['id' => 1]];
+        yield 'null' => [[null]];
+    }
+
+    public function testLockForUpdateUsesTheServerRowLockAndSplitsSortedKeySets(): void
+    {
+        [$connection, $statements] = $this->lockingConnection();
+
+        // Sorting before the split keeps one key order across statements.
+        (new Repository($connection, $this->mapping(), parameterLimit: 2))->lockForUpdate([3, 1, 2]);
+
+        self::assertSame([
+            ['SELECT "id" FROM "items" WHERE "id" IN (:dcValue1, :dcValue2) ORDER BY "id" FOR UPDATE', [1, 2]],
+            ['SELECT "id" FROM "items" WHERE "id" IN (:dcValue1) ORDER BY "id" FOR UPDATE', [3]],
+        ], $statements->getArrayCopy());
+    }
+
+    public function testLockForUpdateCapsKeysPerStatementBelowThePlatformBudget(): void
+    {
+        [$connection, $statements] = $this->lockingConnection();
+
+        // A longer IN list can make MySQL scan, and lock, the whole table.
+        (new Repository($connection, $this->mapping()))->lockForUpdate(range(5001, 1, -1));
+
+        self::assertSame([range(1, 5000), [5001]], array_column($statements->getArrayCopy(), 1));
+    }
+
+    /** @return array{Connection, ArrayObject<int, array{string, list<mixed>}>} */
+    private function lockingConnection(): array
+    {
+        $statements = new ArrayObject();
+        $result = $this->createStub(Result::class);
+        $connection = $this->createStub(Connection::class);
+        $connection->method('getDatabasePlatform')->willReturn(new PostgreSQLPlatform());
+        $connection->method('isTransactionActive')->willReturn(true);
+        $connection->method('createQueryBuilder')->willReturnCallback(
+            static fn() => new \Doctrine\DBAL\Query\QueryBuilder($connection),
+        );
+        $connection->method('executeQuery')->willReturnCallback(
+            static function (string $query, array $parameters) use ($statements, $result): Result {
+                $statements[] = [$query, array_values($parameters)];
+                return $result;
+            },
+        );
+
+        return [$connection, $statements];
+    }
+
+    public function testPurgeByDeletesPhysicallyRegardlessOfVisibility(): void
+    {
+        $repository = new Repository($this->db, $this->mapping(true));
+        $repository->insertMany([['sku' => 'a', 'active' => true], ['sku' => 'b', 'active' => true]]);
+        $repository->delete(1);
+
+        self::assertSame(2, $repository->purgeBy(['active' => true]));
+        self::assertSame(0, $repository->read()->withVisibility(Visibility::All)->count());
+
+        $this->log->sql = [];
+        $this->expectException(InvalidArgumentException::class);
+        try {
+            $repository->purgeBy([]);
+        } finally {
+            self::assertSame([], $this->log->sql);
+        }
     }
 }

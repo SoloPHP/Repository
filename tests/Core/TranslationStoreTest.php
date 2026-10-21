@@ -23,7 +23,6 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\AbstractLogger;
 use RuntimeException;
-use Solo\Repository\Internal\PredicateCompiler;
 use Solo\Repository\Mapping;
 use Solo\Repository\Repository;
 use Solo\Repository\Translations;
@@ -68,7 +67,7 @@ final class TranslationStoreTest extends TestCase
         )');
         $this->connection->insert('items', ['id' => 1, 'sku' => 'active']);
         $this->connection->insert('items', ['id' => 2, 'sku' => 'deleted', 'deleted_at' => '2026-01-01 12:00:00']);
-        $this->store = new TranslationStore($this->connection, $this->mapping());
+        $this->store = $this->translationStore($this->connection, $this->mapping());
         $this->log->sql = [];
     }
 
@@ -85,7 +84,7 @@ final class TranslationStoreTest extends TestCase
             hydrate: static fn (): never => throw new RuntimeException('Hydration must not run.'),
             translations: $this->translations(),
         );
-        $store = new TranslationStore($this->connection, $mapping);
+        $store = $this->translationStore($this->connection, $mapping);
         $store->save('1', 'uk', ['name' => 'Стіл']);
 
         self::assertCount(1, $this->log->sql);
@@ -266,7 +265,7 @@ final class TranslationStoreTest extends TestCase
         $locale = "uk' OR 1 = 1 --";
         $value = "value'); DROP TABLE items; --";
         $this->connection->insert('"order"', ['"key"' => $id]);
-        $store = new TranslationStore($this->connection, new Mapping(
+        $store = $this->translationStore($this->connection, new Mapping(
             table: 'order',
             columns: ['key' => Types::STRING],
             hydrate: static fn (array $row): object => (object) $row,
@@ -318,7 +317,7 @@ final class TranslationStoreTest extends TestCase
     public function testConstructionRequiresTranslationMetadata(): void
     {
         $this->expectException(LogicException::class);
-        new TranslationStore($this->connection, new Mapping(
+        $this->translationStore($this->connection, new Mapping(
             table: 'items',
             columns: ['id' => Types::INTEGER],
             hydrate: static fn (array $row): object => (object) $row,
@@ -342,7 +341,7 @@ final class TranslationStoreTest extends TestCase
                 'en',
             ),
         );
-        $store = new TranslationStore($this->connection, $mapping);
+        $store = $this->translationStore($this->connection, $mapping);
         $store->save(1, 'en', ['name' => 'Original', 'description' => 'Unchanged']);
         $store->save(1, 'en', ['name' => 'Changed']);
 
@@ -395,7 +394,7 @@ final class TranslationStoreTest extends TestCase
                 'en',
             ),
         );
-        (new TranslationStore($connection, $mapping))->save('7', 'uk', ['name' => 'Desk']);
+        $this->translationStore($connection, $mapping)->save('7', 'uk', ['name' => 'Desk']);
     }
 
     public function testMysqlUpsertUsesSeparateTypedUpdateParametersWithoutDeprecatedValuesFunction(): void
@@ -409,7 +408,7 @@ final class TranslationStoreTest extends TestCase
             [Types::INTEGER, Types::STRING, Types::STRING, Types::TEXT, Types::TEXT, Types::STRING],
         )->willReturn(1);
 
-        (new TranslationStore($connection, $this->mapping()))->save('7', 'uk', ['description' => null, 'name' => '']);
+        $this->translationStore($connection, $this->mapping())->save('7', 'uk', ['description' => null, 'name' => '']);
     }
 
     #[DataProvider('unsupportedPlatforms')]
@@ -418,7 +417,7 @@ final class TranslationStoreTest extends TestCase
         $connection = $this->mockConnection($platform);
         $connection->expects(self::never())->method('executeStatement');
         $connection->expects(self::never())->method('executeQuery');
-        $store = new TranslationStore($connection, $this->mapping());
+        $store = $this->translationStore($connection, $this->mapping());
         $this->expectException(LogicException::class);
         $store->save(1, 'en', ['name' => 'Unsupported']);
     }
@@ -426,7 +425,19 @@ final class TranslationStoreTest extends TestCase
     public static function unsupportedPlatforms(): iterable
     {
         yield 'SQL Server' => [new SQLServerPlatform()];
-        yield 'MariaDB is not implicitly supported' => [new MariaDBPlatform()];
+    }
+
+    public function testMariaDbUsesTheMysqlUpsert(): void
+    {
+        $connection = $this->mockConnection(new MariaDBPlatform());
+        $connection->expects(self::once())->method('executeStatement')->with(
+            'INSERT INTO `item_translations` (`item_id`, `locale`, `name`, `description`) VALUES (?, ?, ?, ?)'
+                . ' ON DUPLICATE KEY UPDATE `name` = ?',
+            [7, 'uk', 'Desk', null, 'Desk'],
+            [Types::INTEGER, Types::STRING, Types::STRING, Types::TEXT, Types::STRING],
+        )->willReturn(1);
+
+        $this->translationStore($connection, $this->mapping())->save(7, 'uk', ['name' => 'Desk']);
     }
 
     #[DataProvider('parameterLimits')]
@@ -460,18 +471,133 @@ final class TranslationStoreTest extends TestCase
             hydrate: static fn (array $row): object => (object) $row,
             translations: new Translations('item_translations', 'item_id', $columns, 'en'),
         );
-        (new TranslationStore($connection, $mapping))->save(1, 'en', $patch);
+        $this->translationStore($connection, $mapping, 900)->save(1, 'en', $patch);
     }
 
     public static function parameterLimits(): iterable
     {
-        $maximumFields = PredicateCompiler::MAX_PARAMETERS - 2;
+        $maximumFields = 898;
         yield 'SQLite exact limit' => [new SQLitePlatform(), $maximumFields, 1, true];
         yield 'SQLite over limit' => [new SQLitePlatform(), $maximumFields + 1, 1, false];
         yield 'Postgres exact limit' => [new PostgreSQLPlatform(), $maximumFields, 1, true];
         yield 'Postgres over limit' => [new PostgreSQLPlatform(), $maximumFields + 1, 1, false];
         yield 'MySQL exact limit with duplicated patch' => [new MySQLPlatform(), 449, 449, true];
         yield 'MySQL over limit with duplicated patch' => [new MySQLPlatform(), 450, 449, false];
+    }
+
+    public function testSeedInsertsOnlyMissingLocalesAndKeepsExistingTranslations(): void
+    {
+        $this->store->save(1, 'en', ['name' => 'Existing', 'description' => 'Kept']);
+        $this->log->sql = [];
+
+        self::assertSame(2, $this->store->seed(1, ['en', 'uk', 'de', 'uk'], ['name' => 'Seeded']));
+        self::assertCount(1, $this->log->sql);
+        self::assertSame(['name' => 'Existing', 'description' => 'Kept'], $this->store->get(1, 'en'));
+        self::assertSame(['name' => 'Seeded', 'description' => null], $this->store->get(1, 'uk'));
+        self::assertSame(['name' => 'Seeded', 'description' => null], $this->store->get(1, 'de'));
+        self::assertSame(0, $this->store->seed(1, ['uk'], ['name' => 'Ignored']));
+        self::assertSame(['name' => 'Seeded', 'description' => null], $this->store->get(1, 'uk'));
+    }
+
+    public function testEmptySeedIsANoOpAfterValidation(): void
+    {
+        self::assertSame(0, $this->store->seed(1, [], ['name' => 'Unused']));
+        self::assertSame(0, $this->store->seed(1, ['en'], []));
+        self::assertSame([], $this->log->sql);
+    }
+
+    #[DataProvider('invalidSeeds')]
+    public function testInvalidSeedIsRejectedBeforeSql(int|string $id, array $locales, array $values): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        try {
+            $this->store->seed($id, $locales, $values);
+        } finally {
+            self::assertSame([], $this->log->sql);
+        }
+    }
+
+    public static function invalidSeeds(): iterable
+    {
+        yield 'invalid ID' => ['garbage', ['en'], ['name' => 'Value']];
+        yield 'blank locale' => [1, ['en', ' '], ['name' => 'Value']];
+        yield 'locale type' => [1, [1], ['name' => 'Value']];
+        yield 'unknown field' => [1, ['en'], ['sku' => 'Value']];
+        yield 'value type' => [1, ['en'], ['name' => 1]];
+    }
+
+    public function testSeedSplitsLocalesAtTheParameterLimitAndRollsBackEveryChunk(): void
+    {
+        $this->connection->executeStatement('CREATE TABLE checked_translations (
+            item_id INTEGER NOT NULL REFERENCES items (id), locale TEXT NOT NULL CHECK (locale <> \'xx\'),
+            name TEXT, description TEXT, UNIQUE (item_id, locale)
+        )');
+        $mapping = new Mapping(
+            table: 'items',
+            columns: ['id' => Types::INTEGER],
+            hydrate: static fn (array $row): object => (object) $row,
+            translations: new Translations(
+                'checked_translations',
+                'item_id',
+                ['name' => Types::STRING, 'description' => Types::TEXT],
+                'en',
+            ),
+        );
+        $store = $this->translationStore($this->connection, $mapping, 8);
+        $this->log->sql = [];
+
+        self::assertSame(3, $store->seed(1, ['en', 'uk', 'de'], ['name' => 'Seeded']));
+        self::assertCount(2, $this->log->sql);
+        try {
+            $store->seed(2, ['en', 'uk', 'xx'], ['name' => 'Rolled back']);
+            self::fail('The CHECK constraint must reject the second chunk.');
+        } catch (\Doctrine\DBAL\Exception\DriverException) {
+            self::assertNull($store->get(2, 'en'));
+            self::assertFalse($this->connection->isTransactionActive());
+        }
+    }
+
+    public function testMysqlSeedTurnsDuplicatesIntoANoOpUpdate(): void
+    {
+        $connection = $this->mockConnection(new MySQLPlatform());
+        $connection->expects(self::once())->method('executeStatement')->with(
+            'INSERT INTO `item_translations` (`item_id`, `locale`, `name`, `description`)'
+                . ' VALUES (?, ?, ?, ?), (?, ?, ?, ?) ON DUPLICATE KEY UPDATE `item_id` = `item_id`',
+            [7, 'en', 'Desk', null, 7, 'uk', 'Desk', null],
+            [
+                Types::INTEGER, Types::STRING, Types::STRING, Types::TEXT,
+                Types::INTEGER, Types::STRING, Types::STRING, Types::TEXT,
+            ],
+        )->willReturn(1);
+
+        self::assertSame(1, $this->translationStore($connection, $this->mapping())->seed('7', ['en', 'uk'], [
+            'name' => 'Desk',
+        ]));
+    }
+
+    public function testPostgresSeedSkipsConflictsOnTheTranslationKeyOnly(): void
+    {
+        $connection = $this->mockConnection(new PostgreSQLPlatform());
+        $connection->expects(self::once())->method('executeStatement')->with(
+            'INSERT INTO "item_translations" AS "br_target" ("item_id", "locale", "name", "description")'
+                . ' VALUES (?, ?, ?, ?) ON CONFLICT ("item_id", "locale") DO NOTHING',
+            [7, 'uk', 'Desk', 'Oak'],
+            [Types::INTEGER, Types::STRING, Types::STRING, Types::TEXT],
+        )->willReturn(1);
+
+        self::assertSame(1, $this->translationStore($connection, $this->mapping())->seed(7, ['uk'], [
+            'name' => 'Desk',
+            'description' => 'Oak',
+        ]));
+    }
+
+    #[DataProvider('unsupportedPlatforms')]
+    public function testUnsupportedSeedPlatformsFailBeforeSql(AbstractPlatform $platform): void
+    {
+        $connection = $this->mockConnection($platform);
+        $connection->expects(self::never())->method('executeStatement');
+        $this->expectException(LogicException::class);
+        $this->translationStore($connection, $this->mapping())->seed(1, ['en'], ['name' => 'Unsupported']);
     }
 
     public function testGetConvertsTextStreamsAndFreesTheResult(): void
@@ -495,7 +621,7 @@ final class TranslationStoreTest extends TestCase
         try {
             self::assertSame(
                 ['name' => null, 'description' => 'Long text'],
-                (new TranslationStore($connection, $this->mapping()))->get('7', 'uk'),
+                $this->translationStore($connection, $this->mapping())->get('7', 'uk'),
             );
         } finally {
             fclose($stream);
@@ -512,7 +638,7 @@ final class TranslationStoreTest extends TestCase
         $connection->expects(self::once())->method('executeQuery')->willReturn($result);
 
         $this->expectExceptionObject($failure);
-        (new TranslationStore($connection, $this->mapping()))->get(1, 'en');
+        $this->translationStore($connection, $this->mapping())->get(1, 'en');
     }
 
     private function mapping(): Mapping
@@ -540,8 +666,12 @@ final class TranslationStoreTest extends TestCase
     {
         $connection = $this->createMock(Connection::class);
         $connection->method('getDatabasePlatform')->willReturn($platform);
-        $connection->method('quoteIdentifier')->willReturnCallback($platform->quoteIdentifier(...));
 
         return $connection;
+    }
+
+    private function translationStore(Connection $connection, Mapping $mapping, ?int $limit = null): TranslationStore
+    {
+        return (new Repository($connection, $mapping, parameterLimit: $limit))->translations();
     }
 }

@@ -15,6 +15,7 @@ use PHPUnit\Framework\TestCase;
 use Psr\Log\AbstractLogger;
 use RuntimeException;
 use Solo\Repository\Filter;
+use Solo\Repository\Internal\Database;
 use Solo\Repository\Internal\FieldResolver;
 use Solo\Repository\Internal\Locale;
 use Solo\Repository\Internal\PredicateCompiler;
@@ -33,8 +34,8 @@ final class RelatedFilterTest extends TestCase
 {
     private Connection $connection;
     private Repository $products;
-    private Repository $categories;
-    private Repository $tags;
+    private Mapping $categories;
+    private Mapping $tags;
     private AbstractLogger $log;
 
     protected function setUp(): void
@@ -59,7 +60,7 @@ final class RelatedFilterTest extends TestCase
         );
         $this->createTables();
         $this->seed();
-        $this->categories = new Repository($this->connection, new Mapping(
+        $this->categories = new Mapping(
             table: 'categories',
             columns: [
                 'id' => Types::INTEGER,
@@ -72,13 +73,13 @@ final class RelatedFilterTest extends TestCase
             translations: new Translations('category_translations', 'category_id', ['name' => Types::STRING], 'de'),
             relations: [
                 'parent' => new BelongsTo(
-                    fn (): Repository => $this->categories,
+                    fn (): Mapping => $this->categories,
                     'parent_id',
                     self::forbiddenAssign(...),
                 ),
             ],
-        ));
-        $this->tags = new Repository($this->connection, new Mapping(
+        );
+        $this->tags = new Mapping(
             table: 'tags',
             columns: [
                 'id' => Types::INTEGER,
@@ -94,12 +95,12 @@ final class RelatedFilterTest extends TestCase
             translations: new Translations('tag_translations', 'tag_id', ['name' => Types::STRING], 'uk'),
             relations: [
                 'category' => new BelongsTo(
-                    fn (): Repository => $this->categories,
+                    fn (): Mapping => $this->categories,
                     'category_id',
                     self::forbiddenAssign(...),
                 ),
             ],
-        ));
+        );
         $this->products = $this->productRepository();
         $this->clearLog();
     }
@@ -194,7 +195,8 @@ final class RelatedFilterTest extends TestCase
 
     public function testNestedAndSelfRelationsCorrelateToTheImmediateOwner(): void
     {
-        self::assertSame([2], $this->ids($this->categories->read(), Filter::related(
+        $categories = new Repository($this->connection, $this->categories);
+        self::assertSame([2], $this->ids($categories->read(), Filter::related(
             'parent',
             ['code' => 'furniture'],
         )));
@@ -260,14 +262,10 @@ final class RelatedFilterTest extends TestCase
     public function testFoldedRelatedBranchesDoNotCreateExistsJoinsOrBindings(): void
     {
         $builder = $this->connection->createQueryBuilder()->select('1')->from('products', 'br_base');
-        $fields = new FieldResolver(
-            $this->connection,
-            $this->products->mapping(),
-            $builder,
-            new Locale('uk', 'en'),
-            alias: 'br_base',
-        );
-        $compiler = new PredicateCompiler($this->connection, $this->products->mapping(), $builder, fields: $fields);
+        $db = new Database($this->connection);
+        $mapping = $this->productMapping();
+        $fields = new FieldResolver($db, $mapping, $builder, 'br_base', new Locale('uk', 'en'));
+        $compiler = new PredicateCompiler($db, $mapping, $builder, $fields);
         self::assertTrue($compiler->compile(Filter::any([], Filter::related('tags', ['name' => 'Ignored']))));
         self::assertSame([], $builder->getParameters());
         self::assertSame('SELECT 1 FROM products br_base', $builder->getSQL());
@@ -382,8 +380,10 @@ final class RelatedFilterTest extends TestCase
         $builder->setParameter('locale1', 'keep', Types::STRING);
         $builder->setParameter('predicate1', 'keep', Types::STRING);
         $builder->setParameter('dcValue1', 'keep', Types::STRING);
-        $fields = new FieldResolver($this->connection, $this->products->mapping(), $builder, null, alias: 'br_base');
-        $sql = (new PredicateCompiler($this->connection, $this->products->mapping(), $builder, fields: $fields))
+        $db = new Database($this->connection);
+        $mapping = $this->productMapping();
+        $fields = new FieldResolver($db, $mapping, $builder, 'br_base', null);
+        $sql = (new PredicateCompiler($db, $mapping, $builder, $fields))
             ->compile(Filter::related('tags', ['name' => 'Sale']));
         self::assertIsString($sql);
         self::assertSame([
@@ -406,13 +406,13 @@ final class RelatedFilterTest extends TestCase
         $this->connection->executeStatement('INSERT INTO "order" VALUES (?), (?)', ['01', '1']);
         $this->connection->executeStatement('INSERT INTO "group" VALUES (?, ?)', ['tag-key', $value]);
         $this->connection->executeStatement('INSERT INTO "join" VALUES (?, ?)', ['01', 'tag-key']);
-        $tags = new Repository($this->connection, new Mapping(
+        $tags = new Mapping(
             table: 'group',
             columns: ['select' => Types::STRING, 'where' => Types::STRING],
             hydrate: self::forbiddenHydration(...),
             primaryKey: 'select',
             generatedId: false,
-        ));
+        );
         $repository = new Repository($this->connection, new Mapping(
             table: 'order',
             columns: ['key' => Types::STRING],
@@ -421,7 +421,7 @@ final class RelatedFilterTest extends TestCase
             generatedId: false,
             relations: [
                 'groups' => new BelongsToMany(
-                    static fn (): Repository => $tags,
+                    static fn (): Mapping => $tags,
                     'join',
                     'order',
                     'group',
@@ -456,15 +456,15 @@ final class RelatedFilterTest extends TestCase
         foreach ($statements as $statement) {
             $this->connection->executeStatement($statement);
         }
-        $labels = new Repository($this->connection, new Mapping(
+        $labels = new Mapping(
             table: 'case_labels',
             columns: ['key' => Types::STRING, 'owner_key' => Types::STRING],
             hydrate: self::forbiddenHydration(...),
             primaryKey: 'key',
             generatedId: false,
             translations: new Translations('case_label_translations', 'label_key', ['name' => Types::STRING], 'uk'),
-        ));
-        $target = static fn (): Repository => $labels;
+        );
+        $target = static fn (): Mapping => $labels;
         $repository = new Repository($this->connection, new Mapping(
             table: 'case_owners',
             columns: ['key' => Types::STRING, 'target_key' => Types::STRING],
@@ -497,12 +497,17 @@ final class RelatedFilterTest extends TestCase
 
     private function productRepository(bool $translated = true): Repository
     {
-        $details = new Repository($this->connection, new Mapping(
+        return new Repository($this->connection, $this->productMapping($translated), parameterLimit: 900);
+    }
+
+    private function productMapping(bool $translated = true): Mapping
+    {
+        $details = new Mapping(
             'details',
             ['id' => Types::INTEGER, 'product_id' => Types::INTEGER, 'note' => Types::STRING],
             self::forbiddenHydration(...),
-        ));
-        $reviews = new Repository($this->connection, new Mapping(
+        );
+        $reviews = new Mapping(
             'reviews',
             [
                 'id' => Types::INTEGER,
@@ -512,9 +517,9 @@ final class RelatedFilterTest extends TestCase
             ],
             self::forbiddenHydration(...),
             softDeleteColumn: 'deleted_at',
-        ));
+        );
 
-        return new Repository($this->connection, new Mapping(
+        return new Mapping(
             table: 'products',
             columns: [
                 'id' => Types::INTEGER,
@@ -529,25 +534,25 @@ final class RelatedFilterTest extends TestCase
                 : null,
             relations: [
                 'category' => new BelongsTo(
-                    fn (): Repository => $this->categories,
+                    fn (): Mapping => $this->categories,
                     'category_id',
                     self::forbiddenAssign(...),
                 ),
                 'tags' => new BelongsToMany(
-                    fn (): Repository => $this->tags,
+                    fn (): Mapping => $this->tags,
                     'product_tag',
                     'product_id',
                     'tag_id',
                     self::forbiddenAssign(...),
                 ),
-                'detail' => new HasOne(static fn (): Repository => $details, 'product_id', self::forbiddenAssign(...)),
+                'detail' => new HasOne(static fn (): Mapping => $details, 'product_id', self::forbiddenAssign(...)),
                 'reviews' => new HasMany(
-                    static fn (): Repository => $reviews,
+                    static fn (): Mapping => $reviews,
                     'product_id',
                     self::forbiddenAssign(...),
                 ),
             ],
-        ));
+        );
     }
 
     private function createTables(): void

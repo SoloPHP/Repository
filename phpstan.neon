@@ -1,4 +1,6 @@
 parameters:
-    level: 5
+    level: max
     paths:
         - src
+        # Consumer code checked against the public generic API; never executed.
+        - tests/Types

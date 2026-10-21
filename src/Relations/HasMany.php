@@ -4,11 +4,25 @@ declare(strict_types=1);
 
 namespace Solo\Repository\Relations;
 
+use Solo\Repository\Internal\Identifier;
+use Solo\Repository\Mapping;
+
+/**
+ * A foreign key of the target references the owner's primary key.
+ *
+ * @template TOwner of object
+ * @template TTarget of object
+ */
 final readonly class HasMany extends Relation
 {
-    public function __construct(callable $repository, public string $foreignKey, callable $assign)
+    /**
+     * @param callable(): Mapping<TTarget> $target
+     * @param callable(TOwner, list<TTarget>): TOwner $assign
+     * @param array<string, string> $orderBy
+     */
+    public function __construct(callable $target, public string $foreignKey, callable $assign, array $orderBy = [])
     {
-        self::validateIdentifier($foreignKey);
-        parent::__construct($repository, $assign);
+        Identifier::assert($foreignKey);
+        parent::__construct($target, $assign, $orderBy);
     }
 }

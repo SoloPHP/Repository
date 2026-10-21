@@ -69,6 +69,21 @@ final class TranslationDatabaseTest extends DatabaseTestCase
         $this->log->reset();
     }
 
+    public function testSeedReportsInsertedRowsAndLeavesExistingTranslations(): void
+    {
+        $this->store->save($this->firstId, 'en', ['name' => 'Existing']);
+        $this->log->reset();
+
+        self::assertSame(1, $this->store->seed($this->firstId, ['en', 'uk'], [
+            'name' => 'Seeded',
+            'description' => 'Text',
+        ]));
+        self::assertSame(0, $this->store->seed($this->firstId, ['en', 'uk'], ['name' => 'Again']));
+        self::assertCount(2, $this->log->queries);
+        self::assertSame(['name' => 'Existing', 'description' => null], $this->store->get($this->firstId, 'en'));
+        self::assertSame(['name' => 'Seeded', 'description' => 'Text'], $this->store->get($this->firstId, 'uk'));
+    }
+
     public function testNativeUpsertIsOneStatementAndAppliesPatchAndExplicitNullDefaults(): void
     {
         $this->store->save($this->firstId, 'en', ['description' => 'Initial']);

@@ -13,17 +13,21 @@ use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Solo\Repository\Filter;
+use Solo\Repository\Internal\Database;
+use Solo\Repository\Internal\FieldResolver;
 use Solo\Repository\Internal\PredicateCompiler;
 use Solo\Repository\Mapping;
 
 final class PredicateCompilerTest extends TestCase
 {
     private Connection $connection;
+    private Database $db;
     private Mapping $mapping;
 
     protected function setUp(): void
     {
         $this->connection = DriverManager::getConnection(['driver' => 'pdo_sqlite', 'memory' => true]);
+        $this->db = new Database($this->connection, 900);
         $this->mapping = new Mapping(
             table: 'items',
             columns: [
@@ -265,10 +269,10 @@ final class PredicateCompilerTest extends TestCase
         $builder = $this->builder();
         $builder->setParameter('existing', 'Alpha', Types::STRING);
         $builder->where('i.name = :existing');
-        $sql = $this->compiler($builder)->compile(['id IN' => range(1, PredicateCompiler::MAX_PARAMETERS - 1)]);
+        $sql = $this->compiler($builder)->compile(['id IN' => range(1, 899)]);
 
         self::assertIsString($sql);
-        self::assertCount(PredicateCompiler::MAX_PARAMETERS, $builder->getParameters());
+        self::assertCount(900, $builder->getParameters());
         self::assertSame([1], $this->executeIds($builder->andWhere($sql)));
     }
 
@@ -278,7 +282,7 @@ final class PredicateCompilerTest extends TestCase
         $builder->setParameter('existing', 7, Types::INTEGER);
 
         try {
-            $this->compiler($builder)->compile(['id IN' => range(1, PredicateCompiler::MAX_PARAMETERS)]);
+            $this->compiler($builder)->compile(['id IN' => range(1, 900)]);
             self::fail('Expected the total parameter count to be rejected.');
         } catch (InvalidArgumentException $exception) {
             self::assertStringContainsString('parameter limit', $exception->getMessage());
@@ -290,17 +294,11 @@ final class PredicateCompilerTest extends TestCase
     {
         $builder = $this->connection->createQueryBuilder()->update('items')->set('note', ':note');
         $builder->setParameter('note', 'changed', Types::STRING);
-        $sql = (new PredicateCompiler($this->connection, $this->mapping, $builder))->compile(['id' => 2]);
+        $sql = (new PredicateCompiler($this->db, $this->mapping, $builder))->compile(['id' => 2]);
 
         self::assertIsString($sql);
         self::assertSame(1, $builder->where($sql)->executeStatement());
         self::assertSame([2], $this->selectIds(['note' => 'changed']));
-    }
-
-    public function testInvalidAliasIsRejected(): void
-    {
-        $this->expectException(InvalidArgumentException::class);
-        new PredicateCompiler($this->connection, $this->mapping, $this->builder(), 'i; DELETE FROM items');
     }
 
     private function builder(): QueryBuilder
@@ -310,7 +308,12 @@ final class PredicateCompilerTest extends TestCase
 
     private function compiler(QueryBuilder $builder): PredicateCompiler
     {
-        return new PredicateCompiler($this->connection, $this->mapping, $builder, 'i');
+        return new PredicateCompiler(
+            $this->db,
+            $this->mapping,
+            $builder,
+            new FieldResolver($this->db, $this->mapping, $builder, 'i', null),
+        );
     }
 
     private function selectIds(array|Filter $criteria): array

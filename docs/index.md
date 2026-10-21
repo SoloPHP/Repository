@@ -92,7 +92,7 @@ translations, relations, visibility, and transaction contracts.
 ## Installation
 
 PHP **8.3+**, Doctrine DBAL **^4.3**, and the matching PDO driver are required.
-The integration matrix covers SQLite, MySQL 8.4, and PostgreSQL 17.
+The integration matrix covers SQLite, MySQL 8.4, MariaDB 12.3, and PostgreSQL 17.
 
 Install from the GitHub repository:
 

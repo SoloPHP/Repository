@@ -4,15 +4,14 @@ declare(strict_types=1);
 
 namespace Solo\Repository\Tests\Core;
 
-use Doctrine\DBAL\Platforms\SQLitePlatform;
 use Doctrine\DBAL\Types\Type;
 use Doctrine\DBAL\Types\Types;
 use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Solo\Repository\Internal\Locale;
-use Solo\Repository\Internal\RowMapper;
 use Solo\Repository\Mapping;
+use Solo\Repository\Tests\Core\Fixtures\SqliteRowMapper;
 use Solo\Repository\Translations;
 use stdClass;
 
@@ -134,19 +133,19 @@ final class TranslationsMappingTest extends TestCase
 
     public function testRowMapperConvertsTranslatedTextBeforeHydration(): void
     {
-        $mapper = new RowMapper($this->mapping(), new SQLitePlatform());
+        $mapper = SqliteRowMapper::for($this->mapping());
         $description = fopen('php://memory', 'r+');
         self::assertIsResource($description);
         fwrite($description, 'Translated description');
         rewind($description);
 
         try {
-            $product = $mapper->hydrate([
+            $product = $mapper->hydrate($mapper->convert([
                 'id' => '42',
                 'sku' => 'chair-42',
                 'name' => 'Стілець',
                 'description' => $description,
-            ]);
+            ]));
 
             self::assertSame(42, $product->id);
             self::assertSame('chair-42', $product->sku);
@@ -159,7 +158,7 @@ final class TranslationsMappingTest extends TestCase
 
     public function testPartialTranslatedRowsPreserveNullAndEmptyValues(): void
     {
-        $mapper = new RowMapper($this->mapping(), new SQLitePlatform());
+        $mapper = SqliteRowMapper::for($this->mapping());
 
         self::assertSame(['name' => null, 'description' => null], $mapper->convert([
             'name' => null,

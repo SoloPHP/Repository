@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Solo\Repository\Tests\Database;
+namespace Solo\Repository\Tests\Fixtures;
 
 use Psr\Log\AbstractLogger;
 use Stringable;

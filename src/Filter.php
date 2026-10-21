@@ -5,17 +5,26 @@ declare(strict_types=1);
 namespace Solo\Repository;
 
 use InvalidArgumentException;
+use Solo\Repository\Internal\FilterOperator;
+use Solo\Repository\Internal\Identifier;
 
+/**
+ * Boolean groups and relation predicates, created only through the static factories.
+ * The properties describe the group to the compiler and are not part of the public API.
+ */
 final readonly class Filter
 {
     /**
-     * @param 'AND'|'OR'|'NOT'|'RELATED' $operator
      * @param non-empty-list<array<string, mixed>|self> $parts
      */
     private function __construct(
-        public string $operator,
+        /** @internal */
+        public FilterOperator $operator,
+        /** @internal */
         public array $parts,
+        /** @internal */
         public string $relation = '',
+        /** @internal */
         public Visibility $visibility = Visibility::Active,
     ) {
     }
@@ -27,7 +36,7 @@ final readonly class Filter
             throw new InvalidArgumentException('Filter::all() requires at least one part.');
         }
 
-        return new self('AND', array_values($parts));
+        return new self(FilterOperator::All, array_values($parts));
     }
 
     /** @param array<string, mixed>|self ...$parts */
@@ -37,13 +46,13 @@ final readonly class Filter
             throw new InvalidArgumentException('Filter::any() requires at least one part.');
         }
 
-        return new self('OR', array_values($parts));
+        return new self(FilterOperator::Any, array_values($parts));
     }
 
     /** @param array<string, mixed>|self $part */
     public static function not(array|self $part): self
     {
-        return new self('NOT', [$part]);
+        return new self(FilterOperator::Not, [$part]);
     }
 
     /** @param array<string, mixed>|self $criteria */
@@ -52,10 +61,10 @@ final readonly class Filter
         array|self $criteria = [],
         Visibility $visibility = Visibility::Active,
     ): self {
-        if (preg_match('/\A[A-Za-z_][A-Za-z0-9_]*\z/', $relation) !== 1) {
+        if (!Identifier::isValid($relation)) {
             throw new InvalidArgumentException('A related filter requires a plain relation name.');
         }
 
-        return new self('RELATED', [$criteria], $relation, $visibility);
+        return new self(FilterOperator::Related, [$criteria], $relation, $visibility);
     }
 }

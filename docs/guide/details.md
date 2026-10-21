@@ -17,17 +17,17 @@ composer test
 
 `Mapping` принимает `translations` и `relations`. `withLocale()`, `with()` и `withVisibility()` возвращают независимые настройки чтения. `translations()` и `links()` дают отдельный API записи. Сценарии каталога и экспорта входят в интеграционные тесты.
 
-SQL использует консервативный бюджет 900 параметров на statement, включая locale-параметры JOIN; keyset оставляет один из них для продолжения. Имя таблицы пока простое, без schema-prefix. ID целочисленного PK принимается как int или каноническая десятичная строка: нечисловые значения и переполнение PHP integer для integer/smallint отклоняются. Это исключает превращение ошибочного ID в чужой числовой ключ.
+Бюджет связанных параметров statement включает locale-параметры JOIN; keyset оставляет один из них для продолжения. По умолчанию это лимит платформы: 65 535 для PostgreSQL и MySQL/MariaDB, 32 766 для SQLite 3.32+, 900 для более старого SQLite и прочих платформ. Аргумент `parameterLimit` конструктора `Repository` задаёт другой положительный бюджет, например чтобы раньше отклонять большие IN-фильтры корня. Значение не должно превышать лимит сервера; повышать его стоит только на платформе, чей реальный лимит выше значения по умолчанию. Внутренние списки ключей (загрузка связей, `lockForUpdate()`, удаление в `LinkSet`) дополнительно ограничены 5 000 ключей на statement: более длинный IN-список может превысить память range optimizer MySQL и превратить поиск по индексу в полный скан. Создание репозиториев и запросов не открывает соединение: платформа определяется при построении первого statement. Имя таблицы пока простое, без schema-prefix. ID целочисленного PK принимается как int или каноническая десятичная строка: нечисловые значения и переполнение PHP integer для integer/smallint отклоняются. Это исключает превращение ошибочного ID в чужой числовой ключ.
 
-Основной набор тестов использует SQLite. Отдельный набор `Database` выполняется на реальных MySQL 8.4 и PostgreSQL 17 с native PDO prepares. Он запускается отдельно от `composer test`: отсутствие URL, недоступная БД и пропущенные тесты считаются ошибками.
+Основной набор тестов использует SQLite. Отдельный набор `Database` выполняется на реальных MySQL 8.4, MariaDB 12.3 и PostgreSQL 17 с native PDO prepares. Он запускается отдельно от `composer test`: отсутствие URL, недоступная БД и пропущенные тесты считаются ошибками.
 
 Solo Repository превращает строки БД в обычные PHP-объекты, разрешает переводы с fallback и загружает связи пакетами. Doctrine DBAL остаётся SQL API. Пакет не отслеживает изменения объектов и не сохраняет граф автоматически.
 
-## Проверка на MySQL и PostgreSQL
+## Проверка на MySQL, MariaDB и PostgreSQL
 
-Общий набор из 24 тестов проверяет generated ID и CRUD, преобразование decimal/bool/date/JSON, soft delete и keyset, native PATCH upsert переводов, единый fallback, четыре типа связей и вложенные EXISTS. Отдельные сценарии проверяют пакетные границы, сортировку коллекции из 905 элементов, освобождение предыдущей страницы, строковые ключи и native PostgreSQL UUID, rollback позднего пакета и продолжение внешней транзакции после savepoint. Схемы содержат настоящие FK и UNIQUE; тесты выполняют SQL на серверах без моков платформ.
+Общий набор из 25 тестов проверяет generated ID и CRUD, преобразование decimal/bool/date/JSON, soft delete и keyset, native PATCH upsert переводов, единый fallback, четыре типа связей и вложенные EXISTS. Отдельные сценарии проверяют пакетные границы, запрос с максимальным для сервера числом параметров (65 535), сортировку коллекции из 905 элементов, освобождение предыдущей страницы, строковые ключи и native PostgreSQL UUID, rollback позднего пакета и продолжение внешней транзакции после savepoint. Схемы содержат настоящие FK и UNIQUE; тесты выполняют SQL на серверах без моков платформ.
 
-`.github/workflows/tests.yml` сохраняет три задания основного SQLite-набора и запускает `Database` на каждой из двух СУБД для тех же комбинаций:
+`.github/workflows/tests.yml` сохраняет три задания основного SQLite-набора и запускает `Database` на каждой из трёх СУБД для тех же комбинаций:
 
 | PHP | Ограничение DBAL при установке |
 |---|---|
@@ -35,14 +35,14 @@ Solo Repository превращает строки БД в обычные PHP-о�
 | 8.3 | `^4.3` — актуальная совместимая версия |
 | 8.5 | `^4.3` — актуальная совместимая версия |
 
-Для своей тестовой БД нужен `REPOSITORY_DATABASE_URL` и соответствующее расширение `pdo_mysql` или `pdo_pgsql`. Поддерживаются URL `mysql://` и `postgresql://`; имя БД должно заканчиваться на `_test`. Набор создаёт и удаляет свои fixture-таблицы с префиксом `repo_`, поэтому ему нужна отдельная тестовая БД:
+Для своей тестовой БД нужен `REPOSITORY_DATABASE_URL` и соответствующее расширение `pdo_mysql` или `pdo_pgsql`. Поддерживаются URL `mysql://` (MySQL и MariaDB) и `postgresql://`; имя БД должно заканчиваться на `_test`. Набор создаёт и удаляет свои fixture-таблицы с префиксом `repo_`, поэтому ему нужна отдельная тестовая БД:
 
 ```sh
 REPOSITORY_DATABASE_URL='mysql://repository:repository@127.0.0.1:3306/repository_test' composer test:database
 REPOSITORY_DATABASE_URL='postgresql://repository:repository@127.0.0.1:5432/repository_test' composer test:database
 ```
 
-Локально достаточно Docker с Compose v2. `compose.database.yml` создаёт проект `solo-repository-database`, MySQL 8.4, PostgreSQL 17 и PHP runner. Порты на хост не публикуются, данные обеих БД находятся в tmpfs. Runner монтирует репозиторий только для чтения; зависимости устанавливаются отдельной командой до запуска тестов:
+Локально достаточно Docker с Compose v2. `compose.database.yml` создаёт проект `solo-repository-database`, MySQL 8.4, MariaDB 12.3, PostgreSQL 17 и PHP runner. Порты на хост не публикуются, данные всех БД находятся в tmpfs. Runner монтирует репозиторий только для чтения; зависимости устанавливаются отдельной командой до запуска тестов:
 
 ```sh
 docker compose -f compose.database.yml build tests
@@ -52,7 +52,9 @@ docker run --rm -v "$PWD":/workspace -w /workspace \
 # MySQL — URL по умолчанию.
 docker compose -f compose.database.yml run --rm tests
 
-# PostgreSQL — тот же набор, другой URL.
+# MariaDB и PostgreSQL — тот же набор, другой URL.
+REPOSITORY_DATABASE_URL='mysql://repository:repository@mariadb:3306/repository_test' \
+  docker compose -f compose.database.yml run --rm tests
 REPOSITORY_DATABASE_URL='postgresql://repository:repository@postgres:5432/repository_test' \
   docker compose -f compose.database.yml run --rm tests
 
@@ -60,9 +62,9 @@ REPOSITORY_DATABASE_URL='postgresql://repository:repository@postgres:5432/reposi
 docker compose -f compose.database.yml down --volumes --remove-orphans
 ```
 
-Compose дожидается healthcheck обеих БД. Команда runner — `php vendor/bin/phpunit -c phpunit.database.xml --do-not-cache-result`; ошибки соединения не превращаются в skip. Для выбора PHP передайте `PHP_VERSION=8.5` при сборке. Для локальной проверки минимальной ветки DBAL можно вместо `composer install` выполнить в том же runner `composer update --with='doctrine/dbal:4.3.*'`; это изменит локальные `composer.lock` и `vendor`. После такой проверки верните нужную версию зависимостей.
+Compose дожидается healthcheck всех трёх БД. Команда runner — `php vendor/bin/phpunit -c phpunit.database.xml --do-not-cache-result`; ошибки соединения не превращаются в skip. Для выбора PHP передайте `PHP_VERSION=8.5` при сборке. Для локальной проверки минимальной ветки DBAL можно вместо `composer install` выполнить в том же runner `composer update --with='doctrine/dbal:4.3.*'`; это изменит локальные `composer.lock` и `vendor`. После такой проверки верните нужную версию зависимостей.
 
-MySQL 8.4 и PostgreSQL 17 — проверяемые серверные платформы Solo Repository. MariaDB и другие платформы пока не входят в эту интеграционную матрицу.
+MySQL 8.4, MariaDB 12.3 и PostgreSQL 17 — проверяемые серверные платформы Solo Repository. MariaDB использует те же ветки кода, что и MySQL (generated ID и upsert переводов); другие платформы не поддерживаются.
 
 ## Основные решения
 
@@ -93,12 +95,13 @@ Repository<T> ── Mapping<T> + Connection
    └── links(name) → LinkSet
 ```
 
-Публичные типы: `Repository<T>`, `Mapping<T>`, `ReadQuery<T>`, `Filter`, `Visibility`, `Load`, `Translations`, четыре определения связей, `TranslationStore` и `LinkSet`. Тип `T` задаётся PHPDoc generics для статического анализа; runtime проверяет, что mapper и assign возвращают объект. Namespace `Internal` и методы с `@internal` не являются поддерживаемым API приложения.
+Публичные типы: `Repository<T>`, `Mapping<T>`, `ReadQuery<T>`, `Filter`, `Visibility`, `Load`, `Translations`, четыре определения связей, `TranslationStore` и `LinkSet`. Тип `T` задаётся PHPDoc generics для статического анализа и ковариантен; определения связей параметризованы владельцем и целью, поэтому анализатор проверяет `assign` по Mapping цели. Runtime проверяет, что mapper и assign возвращают объект. Namespace `Internal` и элементы с `@internal` не являются поддерживаемым API приложения: конструкторы `ReadQuery`, `LinkSet` и `TranslationStore` (их получают из `Repository`), свойства `Filter` и `Relation::resolve()`.
 
 Внутри достаточно небольших компонентов по ответственности:
 
+- `Database`: соединение плюс сведения о платформе (диалект, лимит параметров, экранирование), получаемые лениво.
 - `ReadExecutor`: создаёт новый DBAL builder для каждого выполнения.
-- `PredicateCompiler`: переводит ограниченные фильтры в выражения и параметры DBAL.
+- `PredicateCompiler`: проверяет фильтры целиком, сворачивает константы в типизированное дерево условий и переводит его в выражения и параметры DBAL.
 - `FieldResolver`: проверяет колонку и возвращает обычное либо локализованное SQL-выражение.
 - `RowMapper`: применяет типы DBAL и вызывает пользовательский mapper.
 - `RelationLoader`: группирует строки, пакетно получает связи и вызывает `assign`.
@@ -118,7 +121,7 @@ PK обязательно входит в `columns`; FK связи входит 
 
 После чтения типы преобразуются через DBAL перед вызовом `hydrate`. Например, `decimal` остаётся строкой, а `datetime_immutable` становится `DateTimeImmutable`. На запись и в сравнения DBAL получает имя типа и выполняет преобразование один раз. Для `IN` каждый элемент связывается с типом поля. Пользовательские типы регистрируются в DBAL; второй реестр codecs не создаётся. Типы, требующие специальных SQL-обёрток, в первый контракт не входят.
 
-Для загрузки связей ключи сохраняются из **преобразованных строк**, до `hydrate`. Loader не читает `$model->id` или `$model->category_id`. Типы связанных ключей должны быть совместимы. Для строковых ключей FK и соответствующий PK должны использовать одинаковые правила сравнения (collation). Resolver репозитория связи вызывается отложенно, что допускает циклическую конфигурацию через DI; отдельный registry не нужен.
+Для загрузки связей ключи сохраняются из **преобразованных строк**, до `hydrate`. Loader не читает `$model->id` или `$model->category_id`. Типы связанных ключей должны быть совместимы. Для строковых ключей FK и соответствующий PK должны использовать одинаковые правила сравнения (collation). Фабрика `target` возвращает Mapping цели и вызывается отложенно, что допускает циклическую конфигурацию; отдельный registry не нужен. Связанные строки читаются через соединение репозитория владельца.
 
 ## Публичное чтение
 
@@ -149,6 +152,10 @@ findBy(
 ): array;                                 // list<T>
 exists(array|Filter $criteria = []): bool;
 count(array|Filter $criteria = []): int;
+sum(string $field, array|Filter $criteria = []): mixed;   // 0 своего типа, если строк нет
+min(string $field, array|Filter $criteria = []): mixed;   // NULL, если строк нет
+max(string $field, array|Filter $criteria = []): mixed;
+avg(string $field, array|Filter $criteria = []): ?float;
 rows(
     array $columns,
     array|Filter $criteria = [],
@@ -162,6 +169,8 @@ iterateById(array|Filter $criteria = [], int $batchSize = 500): iterable;
 Каждый `with*` возвращает новый объект. Terminal-методы не сбрасывают настройки: запрос можно повторять и независимо разветвлять. `with()` заменяет весь список загрузок, `with([])` очищает его. DBAL builder никогда не хранится как разделяемое изменяемое состояние.
 
 `find` и `findOneBy` ограничивают SQL одной строкой. `exists` запрашивает константу с LIMIT 1. `count` считает корневые записи; загрузки `with()` на эти две операции не влияют. Ни один из этих методов не делает дополнительный COUNT для пагинации.
+
+`sum`, `min`, `max` и `avg` агрегируют одно читаемое поле (в том числе переводимое — с locale запроса) по тем же строкам, что считает `count`: те же критерии, relation predicates и видимость. Итог для отфильтрованного списка совпадает с его фильтром. `sum`, `min` и `max` преобразуют результат DBAL-типом поля: сумма decimal — точная строка, `max('created_at')` — `DateTimeImmutable`. Без подходящих строк `sum` возвращает ноль типа поля, остальные — NULL. `sum` и `avg` принимают только поля smallint, integer, bigint, decimal, float и smallfloat; другие поля отклоняются до SQL. Агрегаты по нескольким таблицам строятся через DBAL.
 
 `rows` возвращает только запрошенные, преобразованные по DBAL типам колонки. Он не создаёт частично заполненные модели. Непустой `with()` для `rows` вызывает ошибку, а не молча игнорируется; можно использовать отдельную ветку запроса с `with([])`.
 
@@ -230,22 +239,27 @@ UNIQUE должен обеспечивать одну строку на влад
 ```php
 get(int|string $id, string $locale): ?array;           // собственные поля, без fallback
 save(int|string $id, string $locale, array $patch): void;
+seed(int|string $id, array $locales, array $values): int;   // вставленные строки
 delete(int|string $id, string $locale): int;
 ```
 
 `save` — атомарный upsert **только переданных полей**. Значения patch принимаются как string или NULL. Пропущенное поле не изменяется, NULL включает fallback при чтении, `""` сохраняет пустой перевод. При создании строки неприсланные переводимые поля получают NULL, независимо от DEFAULT колонки. Пустой patch — no-op после проверки ID и locale. Переведённые поля в обычном `insert/update` и критериях записи отклоняются. Операции store используют физический ID, включая soft-deleted владельца; правила админского редактирования задаёт приложение.
 
-Сохранение выполняет один native upsert: `ON CONFLICT` на SQLite/PostgreSQL или `ON DUPLICATE KEY UPDATE` на MySQL. Оно участвует в транзакции переданного DBAL connection; ошибки FK и ограничений не подавляются. Для других платформ непустой `save` вызывает ошибку до выполнения SQL. При отсутствии `Mapping.translations` вызов `Repository::translations()` тоже даёт явную ошибку.
+Сохранение выполняет один native upsert: `ON CONFLICT` на SQLite/PostgreSQL или `ON DUPLICATE KEY UPDATE` на MySQL/MariaDB. Оно участвует в транзакции переданного DBAL connection; ошибки FK и ограничений не подавляются. Для других платформ непустой `save` вызывает ошибку до выполнения SQL. При отсутствии `Mapping.translations` вызов `Repository::translations()` тоже даёт явную ошибку.
+
+`seed` создаёт перевод для каждой locale, у которой его ещё нет, — например, для всех активных языков новой сущности — и возвращает число вставленных строк. Существующие строки не меняются, поэтому повторный seed безопасен. Значения подчиняются правилам `save`, неприсланные поля новой строки получают NULL. Пропускается только конфликт по паре `(foreignKey, localeColumn)`: `ON CONFLICT ... DO NOTHING` на PostgreSQL/SQLite и no-op `ON DUPLICATE KEY UPDATE` на MySQL/MariaDB, без `INSERT IGNORE`. Ошибки FK и прочих ограничений по-прежнему пробрасываются.
 
 `get` возвращает все объявленные переводимые поля с DBAL conversion. NULL вместо массива означает отсутствие строки; существующая строка со всеми NULL возвращает массив.
 
 ## Связи
 
-Определения `BelongsTo`, `HasOne`, `HasMany`, `BelongsToMany` содержат отложенный `repository: Closure(): Repository` и `assign: Closure(entity, related): entity`. `assign` возвращает исходный объект после setter либо новую immutable-модель. Для to-one аргумент — объект или NULL, для to-many — список, включая пустой.
+Определения `BelongsTo`, `HasOne`, `HasMany`, `BelongsToMany` содержат отложенный `target: Closure(): Mapping` и `assign: Closure(entity, related): entity`. В PHPDoc это `callable(TOwner, ?TTarget): TOwner` для to-one и `callable(TOwner, list<TTarget>): TOwner` для to-many. `assign` возвращает исходный объект после setter либо новую immutable-модель. Для to-one аргумент — объект или NULL, для to-many — список, включая пустой.
 
 Описания связей Solo Repository находятся в namespace `Solo\Repository\Relations` (во множественном числе). Namespace `Solo\BaseRepository\Relation` относится к прежнему пакету `solophp/base-repository`.
 
 У `BelongsTo` `foreignKey` находится у владельца; у `HasOne/HasMany` — у целевой таблицы. В обоих случаях ссылка ведёт на primary key. У `BelongsToMany` задаются `pivotTable`, `foreignPivotKey`, `relatedPivotKey`; UNIQUE по паре ключей и оба FK обязательны. Pivot с дополнительными атрибутами моделируется отдельным репозиторием.
+
+`HasMany` и `BelongsToMany` принимают необязательный `orderBy` — порядок коллекции по умолчанию для каждой загрузки (например, изображения по `position`). `Load` с собственным непустым `orderBy` его заменяет.
 
 ```php
 $query = $query->with([
@@ -258,7 +272,9 @@ $query = $query->with([
 
 `Load` также принимает полный путь, например `Load('category.parent', ...)`. Строки создают структуру пути; явный Load задаёт настройки конкретного ребра. Поэтому `with([new Load('category', visibility: Visibility::All), 'category.parent'])` включает удалённую category, но её parent остаётся Active. Различающиеся явные настройки одного точного пути считаются конфликтом.
 
-Loader выполняет один запрос для to-one/has-many и два для many-to-many: pivot, затем связанные модели. Это бюджет на путь и пакет ключей, а не обещание двух запросов при любом объёме. Большие IN разбиваются с учётом общего бюджета 900 параметров и уже связанных параметров. Translation JOIN не добавляет отдельного round-trip.
+Loader выполняет один запрос для to-one/has-many и два для many-to-many: pivot, затем связанные модели. Это бюджет на путь и пакет ключей, а не обещание двух запросов при любом объёме. Большие IN разбиваются с учётом бюджета параметров и уже связанных параметров. Translation JOIN не добавляет отдельного round-trip.
+
+Целочисленные ключи сравниваются по значению: цель `BelongsTo` выбирается по уникальным FK, гидрируется один раз и передаётся всем владельцам одним объектом; `HasOne/HasMany` выбираются по `fk IN (...)` без JOIN владельцев. Строковые ключи сопоставляются в SQL через JOIN с таблицей владельца, чтобы равенство следовало collation БД; каждая отличающаяся цель всё равно гидрируется один раз.
 
 Единица пакета many-to-many — владельцы. Target SELECT ограничивается EXISTS по pivot и пакету owner IDs, а не списком всех target IDs. Все targets одного владельца сортируются в одном SQL-запросе; loader обходит этот результат в порядке БД и распределяет по pivot. Конкатенация независимо отсортированных target-чанков или PHP-сортировка вместо collation БД не используются.
 
@@ -274,7 +290,7 @@ Loader выполняет один запрос для to-one/has-many и два
 
 Условие видимости добавляется снаружи пользовательской группы: `visible AND (criteria)`. Указание `deleted_at` в критериях не отключает его. Поэтому `not(related('tags', []))` означает отсутствие **видимых** тегов.
 
-`update/updateBy` изменяют только активные строки; изменение колонки soft delete через patch запрещено. `delete/deleteBy` ставят UTC timestamp только активным строкам; повторное удаление возвращает 0 и сохраняет прежний timestamp. Без soft delete эти методы удаляют физически. `restore(id)` очищает timestamp только у удалённой строки и требует настройки soft delete. `purge(id)` физически удаляет строку независимо от видимости. Очистка переводов/pivot при физическом удалении определяется FK и миграциями приложения.
+`update/updateBy` изменяют только активные строки; изменение колонки soft delete через patch запрещено. `delete/deleteBy` ставят UTC timestamp только активным строкам; повторное удаление возвращает 0 и сохраняет прежний timestamp. Без soft delete эти методы удаляют физически. `restore(id)` очищает timestamp только у удалённой строки и требует настройки soft delete. `purge(id)` и `purgeBy(criteria)` физически удаляют строки независимо от видимости; пустой критерий `purgeBy` отклоняется, как у `deleteBy`. Очистка переводов/pivot при физическом удалении определяется FK и миграциями приложения.
 
 ## Запись и транзакции
 
@@ -290,6 +306,8 @@ delete(int|string $id): int;
 deleteBy(array|Filter $criteria): int;
 restore(int|string $id): int;
 purge(int|string $id): int;
+purgeBy(array|Filter $criteria): int;
+lockForUpdate(int|string|array $ids): void;            // только внутри транзакции
 translations(): TranslationStore;
 links(string $relation): LinkSet;                      // только BelongsToMany
 ```
@@ -307,6 +325,8 @@ Patch не меняет пропущенные поля; NULL записывае
 Пустой критерий или критерий, свёрнутый простыми правилами к true, для массовой записи отклоняется до применения soft-delete условия. Это защита от пустого фильтра, а не доказательство безопасности любого логического выражения. Намеренное изменение всей таблицы выражается прямо через DBAL.
 
 `insertMany` принимает строки с одним набором полей; порядок ключей неважен. Различающиеся наборы отклоняются до первой записи. Пустой список возвращает 0. Чанки учитывают лимит параметров; вся операция атомарна. Возвращаемый affected count зависит от драйвера: 0 от UPDATE не доказывает отсутствие записи.
+
+`lockForUpdate(ids)` блокирует физические строки с этими PK до конца текущей транзакции через `SELECT ... FOR UPDATE`; вне транзакции вызов отклоняется. ID нормализуются и дедуплицируются, строки блокируются в порядке ключа (так конкурирующие транзакции не взаимоблокируются). Большие наборы делятся на statement по 5 000 ключей; целочисленные ключи сортируются до разбиения, поэтому порядок сохраняется и между statement, а строковые ключи следуют collation базы внутри каждого statement. В SQLite строковых блокировок нет, выполняется обычный SELECT. Межпроцессные advisory locks («одна критическая секция на заказ») остаются в приложении.
 
 Несколько операций объединяются стандартным `$db->transactional(...)` на общем Connection. Одиночный CRUD не создаёт дополнительную транзакцию. Составные `insertMany` и операции `LinkSet` используют транзакцию/вложенный savepoint DBAL и пробрасывают ошибки. Автоматические retries отсутствуют.
 
@@ -326,7 +346,7 @@ Patch не меняет пропущенные поля; NULL записывае
 
 ## Платформы и ошибки
 
-Проверяемая матрица — PostgreSQL 17 (`pdo_pgsql`), MySQL 8.4 (`pdo_mysql`) и SQLite (`pdo_sqlite`). CI проверяет минимальную ветку DBAL 4.3 и актуальную совместимую версию. MariaDB, SQL Server и прочие платформы не объявляются совместимыми автоматически по наличию DBAL-драйвера; совместимость с более старыми серверными версиями здесь не заявляется.
+Проверяемая матрица — PostgreSQL 17 (`pdo_pgsql`), MySQL 8.4 и MariaDB 12.3 (`pdo_mysql`) и SQLite (`pdo_sqlite`). CI проверяет минимальную ветку DBAL 4.3 и актуальную совместимую версию. MariaDB обрабатывается как MySQL; SQL Server и прочие платформы не объявляются совместимыми автоматически по наличию DBAL-драйвера; совместимость с более старыми серверными версиями здесь не заявляется.
 
 SQL builder, экранирование, параметры, типы и транзакции делегируются DBAL. Узкие операции, для которых нет нужного общего API, проверяют платформу явно: generated ID и PATCH upsert переводов. Нет ветки «всё неизвестное считаем PostgreSQL» и общего INSERT IGNORE, скрывающего сторонние нарушения ограничений.
 
@@ -350,7 +370,8 @@ SQL builder, экранирование, параметры, типы и тра�
 | Связь через публичное свойство repo и имя setter | Lazy callable репозитория и `assign(entity, related): entity` |
 | Неявное поведение `deleted_at` в критериях | `Visibility`; отдельные правила видимости связей |
 | Произвольные наборы полей в `insertMany` | Один набор полей на вызов |
-| Aggregate/transaction/lock wrappers | DBAL и код приложения |
+| `sum/avg/min/max`, `lockForUpdate` | `ReadQuery::sum/avg/min/max`, `Repository::lockForUpdate` |
+| Transaction и advisory lock wrappers | DBAL и код приложения |
 
 Автоматический compatibility layer в ядро не включается. До миграции данных нужно решить, какие старые `""` должны стать NULL для сохранения fallback. Обязательны аудит уникальности переводов/pivot/has-one, совпадения типов ключей и ожиданий mapper. Например, mapper, который сам создаёт дату из строки, теперь получает `DateTimeImmutable`; набор доступных колонок определяется Mapping.
 

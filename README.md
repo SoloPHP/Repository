@@ -7,8 +7,8 @@ Map tables to your own objects, reuse query settings, and write data explicitly.
 ## Requirements and installation
 
 - PHP **8.3+** and Doctrine DBAL **^4.3**.
-- A PDO driver for your database: `pdo_mysql`, `pdo_pgsql`, or `pdo_sqlite`.
-- Tested server versions: **MySQL 8.4** and **PostgreSQL 17**, plus SQLite.
+- A PDO driver for your database: `pdo_mysql` (MySQL and MariaDB), `pdo_pgsql`, or `pdo_sqlite`.
+- Tested server versions: **MySQL 8.4**, **MariaDB 12.3** and **PostgreSQL 17**, plus SQLite.
   Other DBAL platforms are not automatically supported.
 
 Install from the GitHub repository:
@@ -71,17 +71,21 @@ fields are rejected.
 ## What it provides
 
 - Reusable `ReadQuery` settings; `withLocale()`, `with()` and `withVisibility()`
-  return new queries. Projection reads use `rows()` without hydrating models.
+  return new queries. Projection reads use `rows()` without hydrating models;
+  `count()`, `sum()`, `min()`, `max()` and `avg()` share the same criteria.
 - `Filter::all/any/not/related`, with related predicates compiled as `EXISTS`.
 - Field-by-field translation fallback shared by reads, filters, and sorting;
-  explicit translation PATCH upserts through `translations()->save()`.
+  explicit translation PATCH upserts through `translations()->save()` and
+  insert-missing seeding through `translations()->seed()`.
 - `BelongsTo`, `HasOne`, `HasMany`, and `BelongsToMany` in the **`Relations`**
-  namespace, including nested batch loading and inherited locale/fallback.
+  namespace, including nested batch loading, default collection order, and
+  inherited locale/fallback.
 - Soft delete with explicit visibility, bounded ID iteration, atomic bulk
-  inserts, and `links()->attach/detach/sync()` for physical pivot writes.
+  inserts, `lockForUpdate()` row locks, and `links()->attach/detach/sync()` for
+  physical pivot writes.
 
-Schema migrations, aggregate queries, locks, transaction boundaries across
-repositories, and cache invalidation belong to the application and DBAL.
+Schema migrations, multi-table reports, advisory locks, transaction boundaries
+across repositories, and cache invalidation belong to the application and DBAL.
 There is no identity map, lazy loading, automatic cascade save, or change tracking.
 
 ## Documentation
@@ -107,8 +111,8 @@ php examples/relations.php
 php examples/migration.php
 ```
 
-`composer test:database` runs the separate MySQL/PostgreSQL suite and requires
-`REPOSITORY_DATABASE_URL`. See the [Docker and CI instructions](docs/guide/details.md#проверка-на-mysql-и-postgresql).
+`composer test:database` runs the separate MySQL/MariaDB/PostgreSQL suite and requires
+`REPOSITORY_DATABASE_URL`. See the [Docker and CI instructions](docs/guide/details.md#проверка-на-mysql-mariadb-и-postgresql).
 CI covers PHP 8.3 with the minimum DBAL 4.3 branch and PHP 8.3/8.5 with the latest
 compatible DBAL release.
 

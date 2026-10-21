@@ -85,47 +85,45 @@ final class Product
     }
 }
 
-/** @return Repository<Product> */
+/**
+ * Связи ссылаются на Mapping цели: загрузка идёт через Connection владельца.
+ *
+ * @return Repository<Product>
+ */
 function productRepository(Connection $db): Repository
 {
-    $categories = new Repository(
-        connection: $db,
-        mapping: new Mapping(
-            table: 'categories',
-            columns: [
-                'id' => Types::INTEGER,
-                'deleted_at' => Types::DATETIME_IMMUTABLE,
-            ],
-            hydrate: static fn(array $row): Category => new Category($row['id'], $row['name']),
-            translations: new Translations(
-                table: 'category_translations',
-                foreignKey: 'category_id',
-                columns: ['name' => Types::STRING],
-                defaultLocale: 'en',
-            ),
-            softDeleteColumn: 'deleted_at',
+    $categories = new Mapping(
+        table: 'categories',
+        columns: [
+            'id' => Types::INTEGER,
+            'deleted_at' => Types::DATETIME_IMMUTABLE,
+        ],
+        hydrate: static fn(array $row): Category => new Category($row['id'], $row['name']),
+        translations: new Translations(
+            table: 'category_translations',
+            foreignKey: 'category_id',
+            columns: ['name' => Types::STRING],
+            defaultLocale: 'en',
         ),
+        softDeleteColumn: 'deleted_at',
     );
 
-    $tags = new Repository(
-        connection: $db,
-        mapping: new Mapping(
-            table: 'tags',
-            columns: [
-                'id' => Types::INTEGER,
-                'slug' => Types::STRING,
-                'enabled' => Types::BOOLEAN,
-                'deleted_at' => Types::DATETIME_IMMUTABLE,
-            ],
-            hydrate: static fn(array $row): Tag => new Tag($row['id'], $row['slug'], $row['name']),
-            translations: new Translations(
-                table: 'tag_translations',
-                foreignKey: 'tag_id',
-                columns: ['name' => Types::STRING],
-                defaultLocale: 'en',
-            ),
-            softDeleteColumn: 'deleted_at',
+    $tags = new Mapping(
+        table: 'tags',
+        columns: [
+            'id' => Types::INTEGER,
+            'slug' => Types::STRING,
+            'enabled' => Types::BOOLEAN,
+            'deleted_at' => Types::DATETIME_IMMUTABLE,
+        ],
+        hydrate: static fn(array $row): Tag => new Tag($row['id'], $row['slug'], $row['name']),
+        translations: new Translations(
+            table: 'tag_translations',
+            foreignKey: 'tag_id',
+            columns: ['name' => Types::STRING],
+            defaultLocale: 'en',
         ),
+        softDeleteColumn: 'deleted_at',
     );
 
     return new Repository(
@@ -152,13 +150,13 @@ function productRepository(Connection $db): Repository
             softDeleteColumn: 'deleted_at',
             relations: [
                 'category' => new BelongsTo(
-                    repository: static fn(): Repository => $categories,
+                    target: static fn(): Mapping => $categories,
                     foreignKey: 'category_id',
                     assign: static fn(Product $product, ?Category $category): Product =>
                         $product->setCategory($category),
                 ),
                 'tags' => new BelongsToMany(
-                    repository: static fn(): Repository => $tags,
+                    target: static fn(): Mapping => $tags,
                     pivotTable: 'product_tags',
                     foreignPivotKey: 'product_id',
                     relatedPivotKey: 'tag_id',

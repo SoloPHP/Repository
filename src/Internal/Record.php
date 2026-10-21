@@ -19,7 +19,6 @@ final class Record
     public function __construct(
         public readonly array $row,
         public object $entity,
-        public readonly int|string|null $ownerId = null,
     ) {
     }
 }

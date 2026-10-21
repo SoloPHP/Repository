@@ -4,11 +4,24 @@ declare(strict_types=1);
 
 namespace Solo\Repository\Relations;
 
+use Solo\Repository\Internal\Identifier;
+use Solo\Repository\Mapping;
+
+/**
+ * The owner's foreign key references the target's primary key.
+ *
+ * @template TOwner of object
+ * @template TTarget of object
+ */
 final readonly class BelongsTo extends Relation
 {
-    public function __construct(callable $repository, public string $foreignKey, callable $assign)
+    /**
+     * @param callable(): Mapping<TTarget> $target
+     * @param callable(TOwner, TTarget|null): TOwner $assign
+     */
+    public function __construct(callable $target, public string $foreignKey, callable $assign)
     {
-        self::validateIdentifier($foreignKey);
-        parent::__construct($repository, $assign);
+        Identifier::assert($foreignKey);
+        parent::__construct($target, $assign);
     }
 }

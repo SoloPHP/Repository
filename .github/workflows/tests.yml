@@ -55,6 +55,11 @@ jobs:
             port: 3306
             url: mysql://repository:repository@127.0.0.1:3306/repository_test
             health: mysqladmin ping -h 127.0.0.1 -u root -prepository_root --silent
+          - engine: MariaDB 12.3
+            image: mariadb:12.3
+            port: 3306
+            url: mysql://repository:repository@127.0.0.1:3306/repository_test
+            health: healthcheck.sh --connect --innodb_initialized
           - engine: PostgreSQL 17
             image: postgres:17
             port: 5432
