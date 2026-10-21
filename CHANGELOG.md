@@ -57,6 +57,9 @@ Initial release of **Solo Repository** (`solophp/repository`) with the
   one throws `LogicException` before SQL.
 - A relation's target factory runs once per owner mapping instead of on every
   load, filter and link set.
+- Reads without relation loads hydrate rows directly, every read releases rows
+  as it goes, relation batches reuse one prepared target read, and
+  `insertMany()` no longer copies its rows.
 
 ### Migrating from Base Repository
 
