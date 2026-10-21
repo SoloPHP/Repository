@@ -347,7 +347,7 @@ final class RepositoryTest extends TestCase
         $this->repository->restore(1);
     }
 
-    public function testInsertManyNormalizesKeyOrderAndSplitsStatements(): void
+    public function testInsertManyAcceptsAnyKeyOrderAndSplitsStatements(): void
     {
         self::assertSame(3, $this->repository->insertMany([
             ['sku' => 'a', 'active' => true],
@@ -355,10 +355,11 @@ final class RepositoryTest extends TestCase
             ['sku' => 'c', 'active' => true],
         ], batchSize: 2));
         self::assertCount(2, $this->log->sql);
-        self::assertSame(['a', 'b', 'c'], array_column(
-            $this->repository->read()->rows(['sku'], orderBy: ['id' => 'ASC']),
-            'sku',
-        ));
+        self::assertSame([
+            ['sku' => 'a', 'active' => true],
+            ['sku' => 'b', 'active' => false],
+            ['sku' => 'c', 'active' => true],
+        ], $this->repository->read()->rows(['sku', 'active'], orderBy: ['id' => 'ASC']));
     }
 
     public function testInsertManyCapsBoundParameters(): void

@@ -427,6 +427,19 @@ final class RelationLoaderTest extends TestCase
         }
     }
 
+    public function testZeroLimitStillValidatesLoadsWithoutSql(): void
+    {
+        self::assertSame([], $this->items->with(['category.parent', 'tags'])->findBy(limit: 0));
+        self::assertSame([], $this->logger->queries);
+
+        $this->expectException(InvalidArgumentException::class);
+        try {
+            $this->items->with(['category.missing'])->findBy(limit: 0);
+        } finally {
+            self::assertSame([], $this->logger->queries);
+        }
+    }
+
     public function testInvalidNestedPathsAndLoadFiltersFailBeforeOwnerSql(): void
     {
         $loads = [
@@ -528,6 +541,43 @@ final class RelationLoaderTest extends TestCase
         self::assertCount(3, $this->logger->queries);
         self::assertCount(900, $this->logger->parameters[1]);
         self::assertCount(4, $this->logger->parameters[2]);
+    }
+
+    public function testEveryJoinedStringKeyBatchBindsOnlyItsOwnOwners(): void
+    {
+        $this->connection->executeStatement('CREATE TABLE batch_owners (id TEXT PRIMARY KEY)');
+        $this->connection->executeStatement('CREATE TABLE batch_children (id TEXT PRIMARY KEY, owner_id TEXT)');
+        foreach (['a', 'b', 'c'] as $id) {
+            $this->connection->insert('batch_owners', ['id' => $id]);
+            $this->connection->insert('batch_children', ['id' => $id . '-child', 'owner_id' => $id]);
+        }
+        $children = new Mapping(
+            'batch_children',
+            ['id' => Types::STRING, 'owner_id' => Types::STRING],
+            self::model(...),
+            generatedId: false,
+        );
+        $owners = new Repository($this->connection, new Mapping(
+            'batch_owners',
+            ['id' => Types::STRING],
+            self::model(...),
+            generatedId: false,
+            relations: [
+                'children' => new HasMany(static fn(): Mapping => $children, 'owner_id', self::assign('children')),
+            ],
+        ), parameterLimit: 2);
+        $this->resetLog();
+
+        $items = $owners->with(['children'])->findBy(orderBy: ['id' => 'ASC']);
+
+        self::assertSame(
+            [['a-child'], ['b-child'], ['c-child']],
+            array_map(fn(object $item): array => $this->ids($item->relation('children')), $items),
+        );
+        // Each batch clones the prepared read, so no batch carries the keys of another.
+        self::assertCount(3, $this->logger->queries);
+        self::assertCount(2, $this->logger->parameters[1]);
+        self::assertCount(1, $this->logger->parameters[2]);
     }
 
     public function testManyToManyFanoutBeyondParameterLimitKeepsGlobalCollectionOrder(): void

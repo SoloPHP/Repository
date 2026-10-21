@@ -102,6 +102,10 @@ final readonly class ReadQuery
         int $offset = 0,
     ): array {
         $query = $this->executor->selectAll($criteria, $orderBy, $limit, $offset);
+        if ($this->loads->nodes === []) {
+            return $limit === 0 ? [] : $this->executor->entities($query);
+        }
+
         $loader = new RelationLoader($this->db);
         $loads = $loader->prepare($this->mapping, $this->loads, $this->executor->locale());
         if ($limit === 0) {
@@ -192,7 +196,7 @@ final readonly class ReadQuery
             return [];
         }
 
-        return array_map($this->executor->mapper()->convert(...), $this->executor->fetchRows($query));
+        return $this->executor->convertedRows($query);
     }
 
     /**

@@ -323,7 +323,8 @@ final class ReadQueryTest extends TestCase
         $query->iterateById();
     }
 
-    public function testResultIsFreedBeforeUserHydration(): void
+    #[DataProvider('modelReads')]
+    public function testResultIsFreedBeforeUserHydration(string $read): void
     {
         $freed = false;
         $driverResult = $this->createMock(DriverResult::class);
@@ -343,10 +344,21 @@ final class ReadQueryTest extends TestCase
             },
         );
 
-        foreach ($this->query($mapping, $connection)->iterateById(batchSize: 2) as $item) {
-            self::assertSame(1, $item->id);
-            break;
-        }
+        $query = $this->query($mapping, $connection);
+        $item = match ($read) {
+            'findBy' => $query->findBy()[0],
+            'findOneBy' => $query->findOneBy(['id' => 1]),
+            'iterateById' => iterator_to_array($query->iterateById(batchSize: 2), false)[0],
+        };
+
+        self::assertSame(1, $item->id);
+    }
+
+    public static function modelReads(): iterable
+    {
+        yield 'findBy' => ['findBy'];
+        yield 'findOneBy' => ['findOneBy'];
+        yield 'iterateById' => ['iterateById'];
     }
 
     public function testResultIsFreedWhenFetchingFails(): void

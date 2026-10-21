@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Solo\Repository\Internal;
 
-use Solo\Repository\Filter;
+use Doctrine\DBAL\Query\QueryBuilder;
 use Solo\Repository\Relations\Relation;
 
 /** @internal */
@@ -12,16 +12,15 @@ final readonly class PreparedLoad
 {
     /**
      * @param ReadExecutor<object> $executor Reads the relation target.
-     * @param array<string, mixed>|Filter $criteria
-     * @param array<string, 'ASC'|'DESC'> $orderBy The Load order, otherwise the relation default.
+     * @param QueryBuilder $query The target read with the load criteria and order; each batch
+     *                            clones it and never changes it.
      * @param list<PreparedLoad> $children
-     * @param positive-int $batchSize Owner keys per statement, after the load criteria parameters.
+     * @param positive-int $batchSize Owner keys per statement, after the parameters of $query.
      */
     public function __construct(
         public Relation $relation,
         public ReadExecutor $executor,
-        public array|Filter $criteria,
-        public array $orderBy,
+        public QueryBuilder $query,
         public array $children,
         public int $batchSize,
     ) {

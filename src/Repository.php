@@ -288,12 +288,10 @@ final readonly class Repository
                 throw new InvalidArgumentException('Every insert row must be an array.');
             }
             $row = $this->validateInsert($row);
-            ksort($row);
-            $keys = array_keys($row);
-            if ($columns !== null && $keys !== $columns) {
+            $columns ??= array_fill_keys(array_keys($row), true);
+            if (count($row) !== count($columns) || array_diff_key($row, $columns) !== []) {
                 throw new InvalidArgumentException('Every insert row must contain the same columns.');
             }
-            $columns = $keys;
             $validated[] = $row;
         }
 
@@ -306,7 +304,6 @@ final readonly class Repository
      */
     private function validateColumns(array $data): array
     {
-        $validated = [];
         foreach ($data as $column => $value) {
             if (!is_string($column)) {
                 throw new InvalidArgumentException('Data must be keyed by mapped column names.');
@@ -315,11 +312,11 @@ final readonly class Repository
             if ($value !== null) {
                 FieldValue::assert($column, $type, $value);
             }
-            $validated[$column] = $value;
         }
-        $this->db->assertParameters(count($validated));
+        $this->db->assertParameters(count($data));
 
-        return $validated;
+        /** @var array<string, mixed> $data Every key was checked above; the rows are not copied. */
+        return $data;
     }
 
     /** @param array<string, mixed> $data Validated insert data. */
