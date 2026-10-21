@@ -53,16 +53,24 @@ final class FieldResolver
             return $this->db->qualified($this->alias, $field);
         }
 
-        $this->joinTranslations();
+        $locale = $this->locale ?? throw new LogicException(sprintf(
+            'Translated field "%s" needs a locale: read through withLocale() or give the mapping a default locale.',
+            $field,
+        ));
+        $this->joinTranslations($locale);
         $primary = $this->db->qualified($this->alias . '_translation', $field);
 
-        return $this->locale?->fallback === null
+        return $locale->fallback === null
             ? $primary
             : 'COALESCE(' . $primary . ', ' . $this->db->qualified($this->alias . '_fallback', $field) . ')';
     }
 
+    /** A read field under its own name; without a locale, a translated field reads as NULL. */
     public function projection(string $field): string
     {
+        if ($this->locale === null && isset($this->mapping->translations?->columns[$field])) {
+            return 'NULL AS ' . $this->db->quote($field);
+        }
         $expression = $this->expression($field);
 
         return array_key_exists($field, $this->mapping->columns)
@@ -70,17 +78,14 @@ final class FieldResolver
             : $expression . ' AS ' . $this->db->quote($field);
     }
 
-    private function joinTranslations(): void
+    private function joinTranslations(Locale $locale): void
     {
         if ($this->joined) {
             return;
         }
 
-        $translations = $this->mapping->translations;
-        $locale = $this->locale;
-        if ($translations === null || $locale === null) {
-            throw new LogicException('Translation fields require a translation mapping and locale.');
-        }
+        $translations = $this->mapping->translations
+            ?? throw new LogicException('Translated fields require a translation mapping.');
 
         $locales = [$this->alias . '_translation' => $locale->locale];
         if ($locale->fallback !== null) {
@@ -98,7 +103,7 @@ final class FieldResolver
                 $this->alias,
                 $this->db->quote($translations->table),
                 $alias,
-                $this->db->qualified($this->alias, $this->mapping->primaryKey)
+                $this->db->qualified($this->alias, $this->mapping->requirePrimaryKey('Translations'))
                     . ' = ' . $this->db->qualified($alias, $translations->foreignKey)
                     . ' AND ' . $this->db->qualified($alias, $translations->localeColumn) . ' = ' . $parameter,
             );

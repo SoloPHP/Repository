@@ -126,6 +126,33 @@ final class ReadQueryTest extends TestCase
         self::assertStringNotContainsString('"name"', $this->logger->queries[0]);
     }
 
+    public function testQueryBuilderFiltersVisibleRowsForCustomSql(): void
+    {
+        $this->connection->executeStatement('CREATE TABLE tags (item_id INTEGER NOT NULL, tag TEXT NOT NULL)');
+        foreach ([[0, 'a'], [3, 'a'], [3, 'b'], [11, 'a'], [20, 'c']] as [$item, $tag]) {
+            $this->connection->insert('tags', ['item_id' => $item, 'tag' => $tag]);
+        }
+        $this->logger->queries = [];
+        $query = $this->query($this->mapping(static function (): object {
+            throw new RuntimeException('A query builder must not hydrate.');
+        }));
+
+        $builder = $query->queryBuilder('i', ['id >=' => 0]);
+        $builder->select('i.id', 'COUNT(*) AS tags')
+            ->innerJoin('i', 'tags', 't', 't.item_id = i.id AND t.tag <> ' . $builder->createNamedParameter('c'))
+            ->groupBy('i.id')
+            ->orderBy('i.id');
+
+        self::assertSame([], $this->logger->queries);
+        self::assertSame([['id' => 0, 'tags' => 1], ['id' => 3, 'tags' => 2]], $builder->fetchAllAssociative());
+        self::assertStringContainsString('FROM "items" i', $this->logger->queries[0]);
+        self::assertStringContainsString('"i"."deleted_at" IS NULL', $this->logger->queries[0]);
+        self::assertSame(
+            [11],
+            $query->withVisibility(Visibility::Deleted)->queryBuilder('i')->select('i.id')->fetchFirstColumn(),
+        );
+    }
+
     public function testHydrationReceivesConvertedValues(): void
     {
         $item = $this->query($this->mapping())->find(-7);
@@ -218,6 +245,13 @@ final class ReadQueryTest extends TestCase
             'negative batch size' => ['iterateById', [[], -1]],
             'unknown keyset filter' => ['iterateById', [['extra' => 1], 2]],
             'keyset parameter reserve' => ['iterateById', [['id IN' => range(1, 900)], 2]],
+            'empty query alias' => ['queryBuilder', ['']],
+            'uppercase query alias' => ['queryBuilder', ['I']],
+            'quoted query alias' => ['queryBuilder', ['"i"']],
+            'qualified query alias' => ['queryBuilder', ['main.i']],
+            'query alias with a leading digit' => ['queryBuilder', ['1i']],
+            'unknown query builder criteria' => ['queryBuilder', ['i', ['extra' => 1]]],
+            'invalid query builder value' => ['queryBuilder', ['i', ['id' => '1abc']]],
         ];
     }
 

@@ -11,18 +11,24 @@ use Solo\Repository\Internal\Locale;
 
 final readonly class Translations
 {
-    /** @param array<string, string> $columns */
+    /**
+     * @param array<string, string> $columns
+     * @param string|null $defaultLocale The locale of reads that name none. Without it, such reads
+     *                                   join no translations and return NULL translated fields.
+     */
     public function __construct(
         public string $table,
         public string $foreignKey,
         public array $columns,
-        public string $defaultLocale,
+        public ?string $defaultLocale = null,
         public string $localeColumn = 'locale',
     ) {
         Identifier::assert($table);
         Identifier::assert($foreignKey);
         Identifier::assert($localeColumn);
-        new Locale($defaultLocale);
+        if ($defaultLocale !== null) {
+            new Locale($defaultLocale);
+        }
 
         if ($foreignKey === $localeColumn) {
             throw new InvalidArgumentException('Translation foreign key and locale column must be different.');

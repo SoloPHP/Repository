@@ -22,14 +22,14 @@ final readonly class Locale
     }
 
     /**
-     * The inherited locale, otherwise the default locale of a translated mapping.
+     * The inherited locale, otherwise the default locale of a translated mapping, if it has one.
      *
      * @param Mapping<object> $mapping
      */
     public static function effective(?self $inherited, Mapping $mapping): ?self
     {
-        return $inherited ?? ($mapping->translations === null
-            ? null
-            : new self($mapping->translations->defaultLocale));
+        $default = $mapping->translations?->defaultLocale;
+
+        return $inherited ?? ($default === null ? null : new self($default));
     }
 }

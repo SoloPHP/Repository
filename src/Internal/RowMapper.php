@@ -7,6 +7,7 @@ namespace Solo\Repository\Internal;
 use Doctrine\DBAL\Types\Type;
 use Doctrine\DBAL\Types\Types;
 use InvalidArgumentException;
+use LogicException;
 use Solo\Repository\Mapping;
 use UnexpectedValueException;
 
@@ -18,8 +19,8 @@ final readonly class RowMapper
 {
     /** @var array<string, Type> */
     private array $types;
-    private Type $idType;
-    private KeyType $keyType;
+    private ?Type $idType;
+    private ?KeyType $keyType;
     private bool $bigintKey;
 
     /** @param Mapping<T> $mapping */
@@ -31,9 +32,11 @@ final readonly class RowMapper
         }
         $this->types = $types;
 
-        $type = $mapping->columnType($mapping->primaryKey);
-        $this->idType = Type::getType($type);
-        $this->keyType = KeyType::of($type) ?? throw new UnexpectedValueException('Unsupported primary key type.');
+        $type = $mapping->primaryKey === null ? null : $mapping->columnType($mapping->primaryKey);
+        $this->idType = $type === null ? null : Type::getType($type);
+        $this->keyType = $type === null
+            ? null
+            : KeyType::of($type) ?? throw new UnexpectedValueException('Unsupported primary key type.');
         $this->bigintKey = $type === Types::BIGINT;
     }
 
@@ -53,7 +56,8 @@ final readonly class RowMapper
         return $value;
     }
 
-    public function keyType(): KeyType
+    /** NULL for a mapping without a primary key. */
+    public function keyType(): ?KeyType
     {
         return $this->keyType;
     }
@@ -122,6 +126,9 @@ final readonly class RowMapper
 
     public function id(int|string $id): int|string
     {
+        $idType = $this->idType ?? throw new LogicException(
+            sprintf('Mapping "%s" has no primary key to address rows by.', $this->mapping->table),
+        );
         if ($this->keyType === KeyType::Integer) {
             if (is_string($id) && !FieldValue::isCanonicalInteger($id)) {
                 throw new InvalidArgumentException('An integer primary key requires a canonical decimal ID.');
@@ -138,7 +145,7 @@ final readonly class RowMapper
             }
         }
 
-        $id = $this->idType->convertToPHPValue($id, $this->db->platform());
+        $id = $idType->convertToPHPValue($id, $this->db->platform());
 
         if (!is_int($id) && !is_string($id)) {
             throw new UnexpectedValueException('The mapped primary key must convert to an integer or string.');

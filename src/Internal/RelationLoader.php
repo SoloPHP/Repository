@@ -6,6 +6,8 @@ namespace Solo\Repository\Internal;
 
 use Solo\Repository\Mapping;
 use Solo\Repository\Relations\BelongsToMany;
+use Solo\Repository\Relations\Relation;
+use LogicException;
 use UnexpectedValueException;
 
 /** @internal */
@@ -24,12 +26,23 @@ final readonly class RelationLoader
         $prepared = [];
         foreach ($plan->nodes as $name => $node) {
             $relation = $mapping->relation($name);
+            if ($relation->assign === null) {
+                throw new LogicException(sprintf('Relation "%s" has no assign callback to load into.', $name));
+            }
             $target = $relation->resolve($mapping);
+            if ($mapping->primaryKey === null && !self::matchesInPhp($relation, $target)) {
+                throw new LogicException(sprintf(
+                    'Loading relation "%s" by string keys requires a primary key; mapping "%s" has none.',
+                    $name,
+                    $mapping->table,
+                ));
+            }
             $executor = new ReadExecutor($this->db, $target, $node->load->visibility, $inherited);
             $query = $executor->selectAll($node->load->criteria, $node->load->orderBy ?: $relation->orderBy);
 
             $prepared[] = new PreparedLoad(
                 $relation,
+                $relation->assign,
                 $executor,
                 $query,
                 $this->prepare($target, $node->children, $executor->locale()),
@@ -54,7 +67,10 @@ final readonly class RelationLoader
         $primaryKey = $owner->mapping()->primaryKey;
         $keys = [];
         foreach ($records as $index => $record) {
-            $keys[$index] = RowMapper::key($owner->mapper()->rowId($record->row[$primaryKey]));
+            // An owner without a primary key loads BelongsTo by integer keys only, matched by position.
+            $keys[$index] = $primaryKey === null
+                ? 'row:' . $index
+                : RowMapper::key($owner->mapper()->rowId($record->row[$primaryKey]));
         }
 
         foreach ($prepared as $load) {
@@ -70,7 +86,7 @@ final readonly class RelationLoader
                     throw new UnexpectedValueException('A HasOne or BelongsTo relation matched more than one record.');
                 }
                 /** @var mixed $entity */
-                $entity = ($relation->assign)($record->entity, $many ? $group : ($group[0] ?? null));
+                $entity = ($load->assign)($record->entity, $many ? $group : ($group[0] ?? null));
                 if (!is_object($entity)) {
                     throw new UnexpectedValueException('A relation assign callback must return an object.');
                 }
@@ -93,10 +109,10 @@ final readonly class RelationLoader
     {
         $target = $load->executor;
         $ownerColumn = $load->relation->ownerKey($owner->mapping());
-        $targetColumn = $load->relation->targetKey($target->mapping());
-        if (KeyType::of($target->mapping()->columnType($targetColumn)) !== KeyType::Integer) {
+        if (!self::matchesInPhp($load->relation, $target->mapping())) {
             return $this->joined($owner, $owners, $load, $ownerColumn);
         }
+        $targetColumn = $load->relation->targetKey($target->mapping());
 
         $values = [];
         $indexes = [];
@@ -174,7 +190,7 @@ final readonly class RelationLoader
 
             $related = $target->records($target->selectLinked($load->query, $relation, $owner, $chunk));
             $this->load($target, $related, $load->children);
-            $primaryKey = $target->mapping()->primaryKey;
+            $primaryKey = $relation->targetKey($target->mapping());
             foreach ($related as $record) {
                 $targetKey = RowMapper::key($target->mapper()->rowId($record->row[$primaryKey]));
                 foreach ($ownersByTarget[$targetKey] ?? [] as $ownerKey => $_) {
@@ -187,6 +203,17 @@ final readonly class RelationLoader
     }
 
     /**
+     * Integer keys compare exactly, so their targets are matched in PHP; string keys follow the
+     * database collation and are matched in SQL.
+     *
+     * @param Mapping<object> $target
+     */
+    private static function matchesInPhp(Relation $relation, Mapping $target): bool
+    {
+        return KeyType::of($target->columnType($relation->targetKey($target))) === KeyType::Integer;
+    }
+
+    /**
      * Distinct owner primary keys, skipping owners whose required column is NULL.
      *
      * @param ReadExecutor<object> $owner
@@ -195,7 +222,7 @@ final readonly class RelationLoader
      */
     private function ownerIds(ReadExecutor $owner, array $owners, ?string $requiredColumn = null): array
     {
-        $primaryKey = $owner->mapping()->primaryKey;
+        $primaryKey = $owner->mapping()->requirePrimaryKey('Matching relation owners in SQL');
         $ids = [];
         foreach ($owners as $record) {
             if ($requiredColumn === null || $record->row[$requiredColumn] !== null) {

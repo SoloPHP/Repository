@@ -90,13 +90,13 @@ final class TranslationStoreTest extends TestCase
         self::assertCount(1, $this->log->sql);
         self::assertStringStartsWith('INSERT INTO', $this->log->sql[0]);
         self::assertFalse($this->connection->isTransactionActive());
-        self::assertSame(['name' => 'Стіл', 'description' => null], $store->get(1, 'uk'));
+        self::assertSame(['name' => 'Стіл', 'description' => 'database description'], $store->get(1, 'uk'));
     }
 
-    public function testPatchPreservesOmittedExistingFieldsAndNullsNewFieldsDespiteDefaults(): void
+    public function testPatchPreservesOmittedExistingFieldsAndNewRowsTakeColumnDefaults(): void
     {
         $this->store->save(1, 'uk', ['name' => 'Initial']);
-        self::assertSame(['name' => 'Initial', 'description' => null], $this->store->get(1, 'uk'));
+        self::assertSame(['name' => 'Initial', 'description' => 'database description'], $this->store->get(1, 'uk'));
 
         $this->store->save(1, 'uk', ['description' => 'Description']);
         self::assertSame(['name' => 'Initial', 'description' => 'Description'], $this->store->get(1, 'uk'));
@@ -122,17 +122,40 @@ final class TranslationStoreTest extends TestCase
         $this->store->save(1, 'uk', ['name' => 'Українська']);
         $this->store->save(2, 'en', ['name' => 'Other owner']);
 
-        self::assertSame(['name' => 'English', 'description' => null], $this->store->get(1, 'en'));
-        self::assertSame(['name' => 'Українська', 'description' => null], $this->store->get(1, 'uk'));
-        self::assertSame(['name' => 'Other owner', 'description' => null], $this->store->get(2, 'en'));
+        self::assertSame(['name' => 'English', 'description' => 'database description'], $this->store->get(1, 'en'));
+        self::assertSame(['name' => 'Українська', 'description' => 'database description'], $this->store->get(1, 'uk'));
+        self::assertSame(['name' => 'Other owner', 'description' => 'database description'], $this->store->get(2, 'en'));
         self::assertNull($this->store->get(999, 'en'));
+    }
+
+    public function testAllReturnsEveryLocaleOfOneOwnerInLocaleOrder(): void
+    {
+        $this->store->save(1, 'uk', ['name' => 'Українська', 'description' => null]);
+        $this->store->save(1, 'en', ['name' => 'English']);
+        $this->store->save(2, 'de', ['name' => 'Other owner']);
+        $this->log->sql = [];
+
+        self::assertSame([
+            'en' => ['name' => 'English', 'description' => 'database description'],
+            'uk' => ['name' => 'Українська', 'description' => null],
+        ], $this->store->all('1'));
+        self::assertCount(1, $this->log->sql);
+        self::assertSame([], $this->store->all(999));
+
+        $this->log->sql = [];
+        try {
+            $this->store->all('01');
+            self::fail('A non-canonical integer ID must be rejected.');
+        } catch (InvalidArgumentException) {
+            self::assertSame([], $this->log->sql);
+        }
     }
 
     public function testSoftDeletedOwnersRemainEditable(): void
     {
         $this->store->save(2, 'uk', ['name' => 'Deleted owner translation']);
         self::assertSame(
-            ['name' => 'Deleted owner translation', 'description' => null],
+            ['name' => 'Deleted owner translation', 'description' => 'database description'],
             $this->store->get(2, 'uk'),
         );
         self::assertSame(1, $this->store->delete(2, 'uk'));
@@ -178,7 +201,7 @@ final class TranslationStoreTest extends TestCase
             self::assertSame('abort', $exception->getMessage());
         }
 
-        self::assertSame(['name' => 'Original', 'description' => null], $this->store->get(1, 'en'));
+        self::assertSame(['name' => 'Original', 'description' => 'database description'], $this->store->get(1, 'en'));
         self::assertNull($this->store->get(1, 'uk'));
         self::assertFalse($this->connection->isTransactionActive());
     }
@@ -377,10 +400,10 @@ final class TranslationStoreTest extends TestCase
         $connection = $this->mockConnection(new PostgreSQLPlatform());
         $connection->expects(self::never())->method('executeQuery');
         $connection->expects(self::once())->method('executeStatement')->with(
-            'INSERT INTO "excluded" AS "br_target" ("item_id", "locale", "name", "description") VALUES (?, ?, ?, ?)'
+            'INSERT INTO "excluded" AS "br_target" ("item_id", "locale", "name") VALUES (?, ?, ?)'
                 . ' ON CONFLICT ("item_id", "locale") DO UPDATE SET "name" = excluded."name"',
-            [7, 'uk', 'Desk', null],
-            [Types::INTEGER, Types::STRING, Types::STRING, Types::TEXT],
+            [7, 'uk', 'Desk'],
+            [Types::INTEGER, Types::STRING, Types::STRING],
         )->willReturn(1);
 
         $mapping = new Mapping(
@@ -402,10 +425,10 @@ final class TranslationStoreTest extends TestCase
         $connection = $this->mockConnection(new MySQLPlatform());
         $connection->expects(self::never())->method('executeQuery');
         $connection->expects(self::once())->method('executeStatement')->with(
-            'INSERT INTO `item_translations` (`item_id`, `locale`, `name`, `description`) VALUES (?, ?, ?, ?)'
+            'INSERT INTO `item_translations` (`item_id`, `locale`, `description`, `name`) VALUES (?, ?, ?, ?)'
                 . ' ON DUPLICATE KEY UPDATE `description` = ?, `name` = ?',
-            [7, 'uk', '', null, null, ''],
-            [Types::INTEGER, Types::STRING, Types::STRING, Types::TEXT, Types::TEXT, Types::STRING],
+            [7, 'uk', null, '', null, ''],
+            [Types::INTEGER, Types::STRING, Types::TEXT, Types::STRING, Types::TEXT, Types::STRING],
         )->willReturn(1);
 
         $this->translationStore($connection, $this->mapping())->save('7', 'uk', ['description' => null, 'name' => '']);
@@ -431,21 +454,21 @@ final class TranslationStoreTest extends TestCase
     {
         $connection = $this->mockConnection(new MariaDBPlatform());
         $connection->expects(self::once())->method('executeStatement')->with(
-            'INSERT INTO `item_translations` (`item_id`, `locale`, `name`, `description`) VALUES (?, ?, ?, ?)'
+            'INSERT INTO `item_translations` (`item_id`, `locale`, `name`) VALUES (?, ?, ?)'
                 . ' ON DUPLICATE KEY UPDATE `name` = ?',
-            [7, 'uk', 'Desk', null, 'Desk'],
-            [Types::INTEGER, Types::STRING, Types::STRING, Types::TEXT, Types::STRING],
+            [7, 'uk', 'Desk', 'Desk'],
+            [Types::INTEGER, Types::STRING, Types::STRING, Types::STRING],
         )->willReturn(1);
 
         $this->translationStore($connection, $this->mapping())->save(7, 'uk', ['name' => 'Desk']);
     }
 
     #[DataProvider('parameterLimits')]
-    public function testUpsertParameterLimitIncludesOmittedFieldsAndMysqlUpdateBindings(
+    public function testUpsertParameterLimitCountsPatchedFieldsAndMysqlUpdateBindings(
         AbstractPlatform $platform,
         int $fieldCount,
         int $patchCount,
-        bool $allowed,
+        ?int $parameters,
     ): void {
         $columns = [];
         for ($index = 0; $index < $fieldCount; $index++) {
@@ -453,11 +476,11 @@ final class TranslationStoreTest extends TestCase
         }
         $patch = array_fill_keys(array_slice(array_keys($columns), 0, $patchCount), 'value');
         $connection = $this->mockConnection($platform);
-        if ($allowed) {
+        if ($parameters !== null) {
             $connection->expects(self::once())->method('executeStatement')->with(
                 self::anything(),
-                self::callback(static fn (array $parameters): bool => count($parameters) === 900),
-                self::callback(static fn (array $types): bool => count($types) === 900),
+                self::callback(static fn (array $bound): bool => count($bound) === $parameters),
+                self::callback(static fn (array $types): bool => count($types) === $parameters),
             )->willReturn(1);
         } else {
             $connection->expects(self::never())->method('executeStatement');
@@ -476,13 +499,13 @@ final class TranslationStoreTest extends TestCase
 
     public static function parameterLimits(): iterable
     {
-        $maximumFields = 898;
-        yield 'SQLite exact limit' => [new SQLitePlatform(), $maximumFields, 1, true];
-        yield 'SQLite over limit' => [new SQLitePlatform(), $maximumFields + 1, 1, false];
-        yield 'Postgres exact limit' => [new PostgreSQLPlatform(), $maximumFields, 1, true];
-        yield 'Postgres over limit' => [new PostgreSQLPlatform(), $maximumFields + 1, 1, false];
-        yield 'MySQL exact limit with duplicated patch' => [new MySQLPlatform(), 449, 449, true];
-        yield 'MySQL over limit with duplicated patch' => [new MySQLPlatform(), 450, 449, false];
+        yield 'SQLite exact limit' => [new SQLitePlatform(), 898, 898, 900];
+        yield 'SQLite over limit' => [new SQLitePlatform(), 899, 899, null];
+        yield 'Postgres exact limit' => [new PostgreSQLPlatform(), 898, 898, 900];
+        yield 'Postgres over limit' => [new PostgreSQLPlatform(), 899, 899, null];
+        yield 'MySQL exact limit with duplicated patch' => [new MySQLPlatform(), 449, 449, 900];
+        yield 'MySQL over limit with duplicated patch' => [new MySQLPlatform(), 450, 450, null];
+        yield 'omitted fields are not bound' => [new SQLitePlatform(), 2000, 1, 3];
     }
 
     public function testSeedInsertsOnlyMissingLocalesAndKeepsExistingTranslations(): void
@@ -493,10 +516,10 @@ final class TranslationStoreTest extends TestCase
         self::assertSame(2, $this->store->seed(1, ['en', 'uk', 'de', 'uk'], ['name' => 'Seeded']));
         self::assertCount(1, $this->log->sql);
         self::assertSame(['name' => 'Existing', 'description' => 'Kept'], $this->store->get(1, 'en'));
-        self::assertSame(['name' => 'Seeded', 'description' => null], $this->store->get(1, 'uk'));
-        self::assertSame(['name' => 'Seeded', 'description' => null], $this->store->get(1, 'de'));
+        self::assertSame(['name' => 'Seeded', 'description' => 'database description'], $this->store->get(1, 'uk'));
+        self::assertSame(['name' => 'Seeded', 'description' => 'database description'], $this->store->get(1, 'de'));
         self::assertSame(0, $this->store->seed(1, ['uk'], ['name' => 'Ignored']));
-        self::assertSame(['name' => 'Seeded', 'description' => null], $this->store->get(1, 'uk'));
+        self::assertSame(['name' => 'Seeded', 'description' => 'database description'], $this->store->get(1, 'uk'));
     }
 
     public function testEmptySeedIsANoOpAfterValidation(): void
@@ -561,13 +584,10 @@ final class TranslationStoreTest extends TestCase
     {
         $connection = $this->mockConnection(new MySQLPlatform());
         $connection->expects(self::once())->method('executeStatement')->with(
-            'INSERT INTO `item_translations` (`item_id`, `locale`, `name`, `description`)'
-                . ' VALUES (?, ?, ?, ?), (?, ?, ?, ?) ON DUPLICATE KEY UPDATE `item_id` = `item_id`',
-            [7, 'en', 'Desk', null, 7, 'uk', 'Desk', null],
-            [
-                Types::INTEGER, Types::STRING, Types::STRING, Types::TEXT,
-                Types::INTEGER, Types::STRING, Types::STRING, Types::TEXT,
-            ],
+            'INSERT INTO `item_translations` (`item_id`, `locale`, `name`)'
+                . ' VALUES (?, ?, ?), (?, ?, ?) ON DUPLICATE KEY UPDATE `item_id` = `item_id`',
+            [7, 'en', 'Desk', 7, 'uk', 'Desk'],
+            [Types::INTEGER, Types::STRING, Types::STRING, Types::INTEGER, Types::STRING, Types::STRING],
         )->willReturn(1);
 
         self::assertSame(1, $this->translationStore($connection, $this->mapping())->seed('7', ['en', 'uk'], [

@@ -117,7 +117,7 @@ $products = new Repository($db, new Mapping(
 ));
 ```
 
-The application's schema must match this mapping. `Mapping` does not create tables or discover columns. `columns` is an explicit allowlist keyed by **database column names**; those names also appear in criteria, patches and projected rows. Table names are plain identifiers, without a schema prefix. The primary key defaults to `id`, must be mapped and must be a single integer, string, ASCII string or GUID key.
+The application's schema must match this mapping. `Mapping` does not create tables or discover columns. `columns` is an explicit allowlist keyed by **database column names**; those names also appear in criteria, patches and projected rows. Table names are plain identifiers, without a schema prefix. The primary key defaults to `id`, must be mapped and must be a single integer, string, ASCII string or GUID key. A table with a composite key, such as stock keyed by product and store, maps with `primaryKey: null`. Address its rows with criteria, as in `updateBy(['product_id' => 1, 'store_id' => 2], $patch)`: operations by ID require a primary key.
 
 Before `hydrate` runs, DBAL converts every selected mapped field: `decimal` remains a string, `boolean` becomes a PHP boolean, JSON is decoded and `datetime_immutable` becomes `DateTimeImmutable`. Preserve NULL in nullable fields. Update old mappers that call `json_decode()` or construct dates from raw strings; they now receive converted values. You can reuse `Product::fromArray(...)` as the callback if it already accepts these types. The mapper need not expose database IDs or foreign keys as public model properties.
 
@@ -306,7 +306,7 @@ Patches leave omitted fields unchanged; explicit NULL writes NULL. Unknown field
 
 ## 6. Migrate translations and stored data
 
-Replace `$translationConfig['fields']` with typed `Translations::columns` and specify a mandatory `defaultLocale`. The default read now resolves that locale without fallback. A former `$repo->find($id)` without locale no longer means “no translation JOIN” when translations are configured.
+Replace `$translationConfig['fields']` with typed `Translations::columns`. With a `defaultLocale`, a read that names no locale resolves that locale without fallback, so a former `$repo->find($id)` without locale no longer means “no translation JOIN”. Without one, such a read joins no translations, as in v3, but its translated fields come back NULL, and conditions, sorts and aggregates on them throw until the read calls `withLocale()`.
 
 `withLocale('uk', fallback: 'en')` overrides the default. The named parameter is now `fallback`, not v3's `fallbackLocale`. Passing no fallback does not implicitly reuse the mapping's default language.
 
@@ -350,12 +350,13 @@ $translations = $products->translations();
 $translations->save($id, 'uk', ['name' => 'Стілець']);
 $translations->save($id, 'uk', ['description' => null]);
 $ownTranslation = $translations->get($id, 'uk'); // All translated fields, no fallback.
+$everyLocale = $translations->all($id); // ['en' => [...], 'uk' => [...]]
 $deletedRows = $translations->delete($id, 'uk'); // Only this owner/locale.
 ```
 
-`save()` is one atomic native upsert and returns void. Existing omitted fields remain unchanged. On a new row, omitted translated fields are explicitly NULL, even if the database column has a DEFAULT. Values must be string or NULL; unknown/protected fields are rejected rather than silently ignored. An empty patch validates ID/locale and performs no SQL. `get()` returns NULL only when the row is missing; an existing all-NULL translation returns an array.
+`save()` is one atomic native upsert and returns void. Existing omitted fields remain unchanged. On a new row, omitted translated fields take the column default, which is NULL for a column without one. Values must be string or NULL; unknown/protected fields are rejected rather than silently ignored. An empty patch validates ID/locale and performs no SQL. `get()` returns NULL only when the row is missing; an existing all-NULL translation returns an array.
 
-`seedTranslations($id, $locales, $values)` becomes `$translations->seed($id, $locales, $values)`. It inserts a row for every locale that has none and leaves existing rows unchanged, so it is safe to repeat; it returns the number of inserted rows. Unlike v3, omitted translated fields of a new row are NULL, as with `save()`, and only a conflict on the `(foreignKey, localeColumn)` pair is skipped: `INSERT IGNORE` is not used, so FK and other constraint errors still propagate. Do not replace seeding with a loop of `save()`: it would overwrite existing translations.
+`seedTranslations($id, $locales, $values)` becomes `$translations->seed($id, $locales, $values)`. It inserts a row for every locale that has none and leaves existing rows unchanged, so it is safe to repeat; it returns the number of inserted rows. As with `save()`, omitted translated fields of a new row take their column defaults, and only a conflict on the `(foreignKey, localeColumn)` pair is skipped: `INSERT IGNORE` is not used, so FK and other constraint errors still propagate. Do not replace seeding with a loop of `save()`: it would overwrite existing translations.
 
 ## 7. Replace relation definitions and setters
 
@@ -390,7 +391,7 @@ $relations = [
 
 `$categories` and `$tags` are the `Mapping` objects of the target tables; their own repositories are needed only for writing them. Pass `relations: $relations` when constructing the products mapping. Related rows are read through the products repository's connection, so a read replica or a transaction applies to the whole graph. Lazy target callbacks support cyclic configuration and are checked when the relation is resolved.
 
-`assign` must return the owner object, either the mutated object or a new immutable copy. A legacy void setter needs a wrapper that calls the setter **and returns the owner**. To-one callbacks receive an object or NULL; to-many callbacks receive a list, including an empty list. Every relation definition requires a callback, even if the current caller uses it only for filtering.
+`assign` must return the owner object, either the mutated object or a new immutable copy. A legacy void setter needs a wrapper that calls the setter **and returns the owner**. To-one callbacks receive an object or NULL; to-many callbacks receive a list, including an empty list. A relation used only for filtering (`Filter::related()`) or pivot writes (`links()`) may omit `assign`; loading it then throws before SQL.
 
 `BelongsTo` uses an FK on the owner. `HasOne/HasMany` use an FK on the target; `HasOne` requires that FK to be unique. `BelongsToMany` requires UNIQUE on its pivot pair and both foreign keys. Audit compatible types and matching PK/FK collations, including translations. Alternative-key/composite-key relations, cross-connection graphs and pivot attributes are outside 1.0; model a pivot with business fields as a separate repository.
 
@@ -469,12 +470,13 @@ The following v3 extension points have no equivalent in Solo Repository:
 | V3 feature | Migration |
 |---|---|
 | `RepositoryInterface` / subclassing `BaseRepository` | Own an instance of final `Repository`; define an application interface if needed |
-| `getConnection()` and protected `queryBuilder()/table()` | Inject `Connection` into the application component |
+| `getConnection()` and protected `queryBuilder()` | Inject `Connection` into the application component |
+| Protected `table()` with `applyCriteria()` | `read()->queryBuilder($alias, $criteria)`; add the SELECT, joins and `andWhere()` conditions to the returned DBAL builder |
 | `beginTransaction()/commit()/rollBack()/withTransaction()/inTransaction()` | Use DBAL `Connection` transaction methods |
 | `lockForUpdate($ids)` | `Repository::lockForUpdate($ids)` inside a transaction |
 | `withLock($key, $callback)` and `LockTimeoutException` | Application-owned advisory lock (`GET_LOCK`, `pg_advisory_lock`) on the same connection |
 | `sum()/avg()/min()/max()` | `ReadQuery::sum()/avg()/min()/max()` with the same criteria, locale and visibility |
-| `aggregate()` overrides on a joined `table()` | Explicit DBAL aggregate SQL |
+| `aggregate()` overrides on a joined `table()` | `read()->queryBuilder()` with the joins and the aggregate SELECT |
 | `afterWrite()` | Explicit application invalidation/events at the intended transaction boundary |
 | `scopes()` | Application functions returning criteria |
 | Reflection/static mapper convention | Explicit `hydrate` callback in `Mapping` |
@@ -488,18 +490,17 @@ $total = $query->sum('price', $criteria);     // converted by the field type: a 
 $latest = $query->max('created_at', $criteria); // DateTimeImmutable|null
 ```
 
-Aggregates over joined tables stay in DBAL:
+Aggregates over joined tables are DBAL SQL. Start from `queryBuilder()` to keep the list's criteria, soft delete and locale for the mapped table:
 
 ```php
-$total = $db->fetchOne(
-    'SELECT SUM(s.stock * b.price) FROM stocks s JOIN batches b ON b.product_id = s.product_id'
-        . ' WHERE s.store_id = ? AND s.deleted_at IS NULL',
-    [$storeId],
-    [Types::INTEGER],
-);
+$query = $stocks->read()->queryBuilder('s', $criteria);
+$total = $query
+    ->select('SUM(s.stock * b.price)')
+    ->innerJoin('s', 'batches', 'b', 'b.product_id = s.product_id')
+    ->fetchOne();
 ```
 
-This SQL owns its soft-delete and locale semantics; repository policies are not applied to arbitrary DBAL statements. Bind values and validate/quote dynamic identifiers. Raw DBAL results do not automatically pass through the repository's mapping.
+The builder applies the mapping's criteria and visibility only to the mapped table; joined tables and everything else the SQL adds own their soft-delete and locale semantics. V3 criteria keys for joined tables, such as `so.status`, become your own `andWhere()` conditions; `where()` would replace the mapping's criteria and soft-delete condition. Bind values with `createNamedParameter()` and validate/quote dynamic identifiers. Raw DBAL results do not automatically pass through the repository's mapping.
 
 For cache invalidation or outgoing events, decide whether they belong after a successful statement or after the encompassing transaction commits. V3's `afterWrite()` ran before commit and only observed that repository's base-table writes; blindly moving its body after every new call would still miss translation/pivot changes and rollback behavior. Keep that policy in the service orchestrating the workflow; no event bus or unit of work is added.
 

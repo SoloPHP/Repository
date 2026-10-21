@@ -118,6 +118,23 @@ final class RelatedFilterTest extends TestCase
         self::assertStringContainsString('EXISTS (SELECT 1', $this->log->sql[0]);
     }
 
+    #[DataProvider('relationCases')]
+    public function testQueryBuilderCorrelatesEveryRelationKindToItsAlias(Filter $criteria, array $ids): void
+    {
+        $builder = $this->products->read()->queryBuilder('p', $criteria)->select('p.id')->orderBy('p.id');
+
+        self::assertSame($ids, $builder->fetchFirstColumn());
+        self::assertStringContainsString('"p_related1"', $this->log->sql[0]);
+    }
+
+    public function testQueryBuilderRejectsRelationLoads(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('Query builders cannot load relations');
+
+        $this->products->with(['category'])->queryBuilder('p');
+    }
+
     public static function relationCases(): iterable
     {
         yield 'belongs to' => [Filter::related('category', ['code' => 'chairs']), [2, 6]];

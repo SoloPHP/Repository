@@ -36,6 +36,8 @@ final readonly class ReadQuery
         Types::SMALLFLOAT,
     ];
 
+    private const string ALIAS_PATTERN = '/\A[a-z_][a-z0-9_]*\z/';
+
     /** @var ReadExecutor<T> */
     private ReadExecutor $executor;
 
@@ -77,7 +79,7 @@ final readonly class ReadQuery
     /** @return T|null */
     public function find(int|string $id): ?object
     {
-        return $this->findOneBy([$this->mapping->primaryKey => $this->executor->mapper()->id($id)]);
+        return $this->findOneBy([$this->mapping->requirePrimaryKey('find()') => $this->executor->mapper()->id($id)]);
     }
 
     /**
@@ -200,6 +202,31 @@ final readonly class ReadQuery
     }
 
     /**
+     * A DBAL query over the visible rows that match the criteria, for SQL the read methods cannot
+     * express. It selects nothing: add the SELECT and any joins, grouping or order, naming this
+     * table by the alias. Add conditions with andWhere(), never where(): where() replaces the
+     * whole WHERE clause and silently drops the criteria and the soft-delete condition. Values
+     * are bound as named parameters, so bind further values with createNamedParameter(). Its rows
+     * are not converted through the mapping.
+     *
+     * @param string $alias A lowercase SQL identifier, so that unquoted references match it on every platform.
+     * @param array<string, mixed>|Filter $criteria
+     */
+    public function queryBuilder(string $alias, array|Filter $criteria = []): QueryBuilder
+    {
+        if ($this->loads->nodes !== []) {
+            throw new InvalidArgumentException('Query builders cannot load relations; use with([]) for SQL.');
+        }
+        if (preg_match(self::ALIAS_PATTERN, $alias) !== 1) {
+            throw new InvalidArgumentException(
+                sprintf('Query alias "%s" must be a lowercase SQL identifier.', $alias),
+            );
+        }
+
+        return $this->executor->filtered($alias, $criteria);
+    }
+
+    /**
      * Read ascending integer primary keys in bounded batches, without a snapshot guarantee.
      * Validation runs immediately; SQL starts when the iterable is consumed.
      *
@@ -211,11 +238,11 @@ final readonly class ReadQuery
         if ($batchSize < 1) {
             throw new InvalidArgumentException('Batch size must be greater than zero.');
         }
-        if ($this->executor->mapper()->keyType() !== KeyType::Integer) {
+        $key = $this->mapping->primaryKey;
+        if ($key === null || $this->executor->mapper()->keyType() !== KeyType::Integer) {
             throw new InvalidArgumentException('Keyset iteration requires an integer primary key.');
         }
 
-        $key = $this->mapping->primaryKey;
         $query = $this->executor->selectAll($criteria, [$key => 'ASC'], $batchSize);
         // Later batches bind one more parameter: the key to continue after.
         $this->db->assertParameters(count($query->getParameters()) + 1);
@@ -223,7 +250,7 @@ final readonly class ReadQuery
         $loader = new RelationLoader($this->db);
         $loads = $loader->prepare($this->mapping, $this->loads, $this->executor->locale());
 
-        return $this->iterate($query, $criteria, $batchSize, $loader, $loads);
+        return $this->iterate($query, $key, $criteria, $batchSize, $loader, $loads);
     }
 
     /**
@@ -233,12 +260,12 @@ final readonly class ReadQuery
      */
     private function iterate(
         QueryBuilder $query,
+        string $key,
         array|Filter $criteria,
         int $batchSize,
         RelationLoader $loader,
         array $loads,
     ): Generator {
-        $key = $this->mapping->primaryKey;
         while (true) {
             $records = $this->executor->records($query);
             $size = count($records);

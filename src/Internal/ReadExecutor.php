@@ -111,6 +111,19 @@ final readonly class ReadExecutor
     }
 
     /**
+     * The visible rows that match the criteria, under the caller's alias, with nothing selected.
+     *
+     * @param array<string, mixed>|Filter $criteria
+     */
+    public function filtered(string $alias, array|Filter $criteria): QueryBuilder
+    {
+        [$query, $fields] = $this->createQuery($alias);
+        $this->applyCriteria($query, $fields, $criteria);
+
+        return $query;
+    }
+
+    /**
      * One value selected over the visible rows that match the criteria.
      *
      * @param Closure(FieldResolver): string $select
@@ -163,7 +176,8 @@ final readonly class ReadExecutor
     ): QueryBuilder {
         $query = clone $prepared;
         $ownerMapping = $owner->mapping();
-        $ownerKey = $this->db->qualified('br_owner', $ownerMapping->primaryKey);
+        $ownerPrimaryKey = $ownerMapping->requirePrimaryKey('Matching relation owners in SQL');
+        $ownerKey = $this->db->qualified('br_owner', $ownerPrimaryKey);
         $query->innerJoin(
             self::ALIAS,
             $this->db->quote($ownerMapping->table),
@@ -177,7 +191,7 @@ final readonly class ReadExecutor
             ->andWhere($this->db->inList(
                 $query,
                 $ownerKey,
-                $ownerMapping->columnType($ownerMapping->primaryKey),
+                $ownerMapping->columnType($ownerPrimaryKey),
                 $ownerIds,
             ));
 
@@ -195,8 +209,9 @@ final readonly class ReadExecutor
     public function linkedKeys(BelongsToMany $via, ReadExecutor $owner, array $ownerIds): array
     {
         $ownerMapping = $owner->mapping();
-        $ownerKey = $this->db->qualified('br_owner_table', $ownerMapping->primaryKey);
-        $targetKey = $this->db->qualified('br_target_table', $this->mapping->primaryKey);
+        $ownerPrimaryKey = $via->ownerKey($ownerMapping);
+        $ownerKey = $this->db->qualified('br_owner_table', $ownerPrimaryKey);
+        $targetKey = $this->db->qualified('br_target_table', $via->targetKey($this->mapping));
         $query = $this->db->connection->createQueryBuilder()
             ->select(
                 $ownerKey . ' AS ' . $this->db->quote('br_owner'),
@@ -218,7 +233,7 @@ final readonly class ReadExecutor
         $query->where($this->db->inList(
             $query,
             $ownerKey,
-            $ownerMapping->columnType($ownerMapping->primaryKey),
+            $ownerMapping->columnType($ownerPrimaryKey),
             $ownerIds,
         ));
 
@@ -249,17 +264,18 @@ final readonly class ReadExecutor
     ): QueryBuilder {
         $query = clone $prepared;
         $ownerMapping = $owner->mapping();
-        $ownerKey = $this->db->qualified('br_link_owner', $ownerMapping->primaryKey);
+        $ownerPrimaryKey = $via->ownerKey($ownerMapping);
+        $ownerKey = $this->db->qualified('br_link_owner', $ownerPrimaryKey);
         $query->andWhere('EXISTS (SELECT 1 FROM ' . $this->db->quote($via->pivotTable)
             . ' ' . $this->db->quote('br_link')
             . ' INNER JOIN ' . $this->db->quote($ownerMapping->table) . ' ' . $this->db->quote('br_link_owner')
             . ' ON ' . $ownerKey . ' = ' . $this->db->qualified('br_link', $via->foreignPivotKey)
-            . ' WHERE ' . $this->db->qualified(self::ALIAS, $this->mapping->primaryKey)
+            . ' WHERE ' . $this->db->qualified(self::ALIAS, $via->targetKey($this->mapping))
             . ' = ' . $this->db->qualified('br_link', $via->relatedPivotKey)
             . ' AND ' . $this->db->inList(
                 $query,
                 $ownerKey,
-                $ownerMapping->columnType($ownerMapping->primaryKey),
+                $ownerMapping->columnType($ownerPrimaryKey),
                 $ownerIds,
             ) . ')');
 
@@ -328,11 +344,13 @@ final readonly class ReadExecutor
     public function joinedRecords(QueryBuilder $query, ReadExecutor $owner): array
     {
         $ownerColumn = $this->ownerColumn();
+        $primaryKey = $this->mapping->primaryKey;
         $records = [];
         $pairs = [];
-        foreach ($this->releasedRows($query) as $row) {
+        foreach ($this->releasedRows($query) as $index => $row) {
             $ownerKey = RowMapper::key($owner->mapper()->rowId($row[$ownerColumn]));
-            $key = RowMapper::key($this->mapper->rowId($row[$this->mapping->primaryKey]));
+            // A target without a primary key is a HasOne or HasMany row, which joins one owner only.
+            $key = $primaryKey === null ? $index : RowMapper::key($this->mapper->rowId($row[$primaryKey]));
             if (!isset($records[$key])) {
                 unset($row[$ownerColumn]);
                 $row = $this->mapper->convert($row);
@@ -374,11 +392,11 @@ final readonly class ReadExecutor
     }
 
     /** @return array{QueryBuilder, FieldResolver} */
-    private function createQuery(): array
+    private function createQuery(string $alias = self::ALIAS): array
     {
         $query = $this->db->connection->createQueryBuilder();
-        $fields = new FieldResolver($this->db, $this->mapping, $query, self::ALIAS, $this->locale);
-        $query->from($this->db->quote($this->mapping->table), self::ALIAS);
+        $fields = new FieldResolver($this->db, $this->mapping, $query, $alias, $this->locale);
+        $query->from($this->db->quote($this->mapping->table), $alias);
 
         return [$query, $fields];
     }

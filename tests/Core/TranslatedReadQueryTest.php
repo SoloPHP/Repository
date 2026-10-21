@@ -12,12 +12,14 @@ use Doctrine\DBAL\DriverManager;
 use Doctrine\DBAL\Logging\Middleware;
 use Doctrine\DBAL\Types\Types;
 use InvalidArgumentException;
+use LogicException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\AbstractLogger;
 use RuntimeException;
 use Solo\Repository\Filter;
 use Solo\Repository\Mapping;
+use Solo\Repository\ReadQuery;
 use Solo\Repository\Repository;
 use Solo\Repository\Translations;
 use Solo\Repository\Visibility;
@@ -530,7 +532,7 @@ final class TranslatedReadQueryTest extends TestCase
         );
     }
 
-    private function mapping(?Closure $hydrate = null, bool $translated = true): Mapping
+    private function mapping(?Closure $hydrate = null, bool $translated = true, ?string $defaultLocale = 'en'): Mapping
     {
         return new Mapping(
             table: 'items',
@@ -547,10 +549,67 @@ final class TranslatedReadQueryTest extends TestCase
                 table: 'item_translations',
                 foreignKey: 'item_id',
                 columns: ['name' => Types::STRING, 'description' => Types::TEXT],
-                defaultLocale: 'en',
+                defaultLocale: $defaultLocale,
                 localeColumn: 'locale',
             ) : null,
         );
+    }
+
+    public function testQueryBuilderJoinsOnlyTheTranslationsItsCriteriaNeed(): void
+    {
+        $query = $this->repository->withLocale('uk', fallback: 'en');
+
+        $builder = $query->queryBuilder('i', ['name LIKE' => '%o%'])->select('i.id')->orderBy('i.id');
+        self::assertSame([1, 10], $builder->fetchFirstColumn());
+        self::assertSame(2, $this->joinCount($this->logger->queries[0]));
+        self::assertStringContainsString('"i_translation"."name"', $this->logger->queries[0]);
+        self::assertStringContainsString('"i_fallback"."name"', $this->logger->queries[0]);
+        self::assertSame(['uk', 'en', '%o%'], array_values($this->logger->parameters[0]));
+
+        $this->resetLog();
+        self::assertSame([2], $query->queryBuilder('i', ['enabled' => false])->select('i.id')->fetchFirstColumn());
+        self::assertSame(0, $this->joinCount($this->logger->queries[0]));
+    }
+
+    public function testWithoutADefaultLocaleReadsJoinNoTranslationsAndReturnNullText(): void
+    {
+        $items = new Repository($this->connection, $this->mapping(defaultLocale: null));
+
+        $item = $items->read()->find(1);
+        self::assertSame([null, null], [$item->name, $item->description]);
+        self::assertSame([['id' => 2, 'name' => null]], $items->read()->rows(['id', 'name'], ['id' => 2]));
+        self::assertSame(2, $items->read()->count(['id IN' => [1, 2]]));
+        self::assertCount(3, $this->logger->queries);
+        foreach ($this->logger->queries as $sql) {
+            self::assertSame(0, $this->joinCount($sql));
+        }
+        self::assertSame('Bravo', $items->withLocale('en')->find(1)->name);
+    }
+
+    #[DataProvider('readsNeedingALocale')]
+    public function testTranslatedConditionsSortsAndAggregatesNeedALocaleWithoutADefault(Closure $read): void
+    {
+        $items = new Repository($this->connection, $this->mapping(defaultLocale: null));
+
+        try {
+            $read($items->read());
+            self::fail('A translated field without a locale must be rejected.');
+        } catch (LogicException $exception) {
+            self::assertSame(
+                'Translated field "name" needs a locale: read through withLocale() or give the mapping a default locale.',
+                $exception->getMessage(),
+            );
+            self::assertSame([], $this->logger->queries);
+        }
+    }
+
+    public static function readsNeedingALocale(): iterable
+    {
+        yield 'condition' => [static fn(ReadQuery $query): mixed => $query->findBy(['name' => 'Bravo'])];
+        yield 'order' => [static fn(ReadQuery $query): mixed => $query->findBy([], ['name' => 'ASC'])];
+        yield 'aggregate' => [static fn(ReadQuery $query): mixed => $query->max('name')];
+        yield 'count' => [static fn(ReadQuery $query): mixed => $query->count(['name LIKE' => 'B%'])];
+        yield 'query builder' => [static fn(ReadQuery $query): mixed => $query->queryBuilder('i', ['name' => 'Bravo'])];
     }
 
     private function resetLog(): void

@@ -55,7 +55,7 @@ Mapping::__construct(
     string $table,
     array $columns,                 // array<string, string>: column => DBAL type name
     callable $hydrate,             // callable(array<string, mixed>): T
-    string $primaryKey = 'id',
+    ?string $primaryKey = 'id',    // NULL for a table without a single-column key
     bool $generatedId = true,
     ?string $softDeleteColumn = null,
     ?Translations $translations = null,
@@ -82,6 +82,10 @@ The single primary key must be present in `columns` and use one of:
 | `string`, `ascii_string`, `guid` | Rejected; set `false` | Nonempty string; an integer ID becomes a string |
 
 Methods with a separate ID argument and explicit primary keys in insert data normalize that ID before SQL. Integer strings must match `0` or an optionally negative decimal integer without leading zeros: `12` and `-12` are valid; `01`, `+1`, `-0`, `1.5`, whitespace and `12x` are invalid. `integer`/`smallint` IDs outside the PHP integer range are rejected. `bigint` conversion follows DBAL and may return a string outside that range. Database column ranges and UUID syntax remain database/type concerns.
+
+Set `primaryKey: null` for a table without a single-column key, such as one with a composite key. Its rows are read, inserted and changed through criteria: `findBy()`, `rows()`, `count()`, the aggregates, `queryBuilder()`, `insert()`, `insertMany()`, `updateBy()`, `deleteBy()` and `purgeBy()`. Operations that address one row by ID (`find()`, `insertGetId()`, `update()`, `delete()`, `restore()`, `purge()` and `lockForUpdate()`) throw `LogicException` before SQL, and `iterateById()` throws `InvalidArgumentException`. Such a mapping has no generated ID, and every inserted row needs at least one column.
+
+A mapping without a primary key cannot have translations, and its only relations are `BelongsTo`: `HasOne`, `HasMany` and `BelongsToMany` match their owner by its primary key. It can be the target of `HasOne` and `HasMany`, but not of `BelongsTo` or `BelongsToMany`, which reference the target's primary key. Its `BelongsTo` relations can be filtered by with any key type; loading one needs an integer target key, because string keys follow the database collation and are matched in SQL through the owner's primary key. Loading a string-key `BelongsTo` from such an owner throws `LogicException` before SQL.
 
 Criteria values of integer fields follow the same rule without being converted: `findBy(['id' => '12x'])` throws instead of matching 12. See [Criteria and Filter](#criteria-and-filter) for the other field types.
 
@@ -129,6 +133,7 @@ ReadQuery::rows(
     int $offset = 0,
 ): array;                                             // list<array<string, mixed>>
 ReadQuery::iterateById(array|Filter $criteria = [], int $batchSize = 500): iterable;
+ReadQuery::queryBuilder(string $alias, array|Filter $criteria = []): QueryBuilder;
 ```
 
 `criteria` is an associative array or `Filter`. `orderBy` maps readable fields to `ASC`/`DESC`, case-insensitively. All `with*()` methods return a new query; executing a query does not consume its settings. `with()` replaces the complete include list, and `with([])` clears it.
@@ -138,6 +143,7 @@ ReadQuery::iterateById(array|Filter $criteria = [], int $batchSize = 500): itera
 - `rows()` returns only the selected, DBAL-converted fields and never calls the hydrator. It rejects nonempty includes; use `with([])` on that branch.
 - `count()` and `exists()` do not hydrate models or resolve/load includes. Relation predicates in their criteria still apply. `exists()` selects a constant with a one-row limit.
 - `sum()`, `min()`, `max()` and `avg()` aggregate one readable field, including a translated field under the query locale, over the rows `count()` would count. `sum()`, `min()` and `max()` convert the result through the field's DBAL type, so a decimal sum is an exact string and `max('created_at')` a `DateTimeImmutable`. `sum()` returns zero of that type when nothing matches; `min()`, `max()` and `avg()` return NULL. `avg()` returns a float. `sum()` and `avg()` require a smallint, integer, bigint, decimal, float or smallfloat field and reject other fields before SQL.
+- `queryBuilder()` returns a new DBAL `QueryBuilder` over the rows `count()` would count, for SQL the other methods cannot express; see [the DBAL escape hatch](#transactions-and-the-dbal-escape-hatch). It rejects nonempty includes.
 - Without `orderBy`, ordering is unspecified. Add the primary key as a final tie-breaker for stable pages. Negative limit/offset values are rejected. `limit: 0` validates query settings and returns an empty list without executing the read.
 
 ```php
@@ -212,7 +218,7 @@ Translations::__construct(
     string $table,
     string $foreignKey,
     array $columns,                 // nonempty array<string, string>
-    string $defaultLocale,
+    ?string $defaultLocale = null,
     string $localeColumn = 'locale',
 );
 ```
@@ -233,11 +239,11 @@ $translations = new Translations(
 
 The schema must enforce a foreign key to the owner's PK and UNIQUE `(foreignKey, localeColumn)`. Matching PK/FK types and collation are the application's responsibility. That pair must be the only possible uniqueness conflict when inserting translation data: MySQL's native upsert can react to any unique index, so extra UNIQUE constraints on translated fields require a separate application write operation. Mapping does not inspect or create the schema.
 
-Ordinary model reads use `defaultLocale` with no fallback. `withLocale('uk', fallback: 'en')` resolves each field independently as `COALESCE(uk.field, en.field)`. A missing row or NULL field can fall back; `''` and `'0'` remain valid translations. SELECT, WHERE, ORDER BY and related predicates use the same resolved expression.
+Ordinary model reads use `defaultLocale` with no fallback. Without a default locale, a read that names no locale joins no translations: translated fields come back NULL, and conditions, sorts and aggregates on them throw a `LogicException` until the read calls `withLocale()`. `withLocale('uk', fallback: 'en')` resolves each field independently as `COALESCE(uk.field, en.field)`. A missing row or NULL field can fall back; `''` and `'0'` remain valid translations. SELECT, WHERE, ORDER BY and related predicates use the same resolved expression.
 
 Locale/fallback values must be nonempty after PHP `trim()`; their original text is otherwise preserved. The package does not canonicalize language tags or infer regional fallback. A fallback equal to the locale is redundant and removed. Calling `withLocale('en')` clears a previously configured fallback; the direct constructor rejects a fallback without a locale.
 
-The effective locale and fallback are inherited by related reads and predicates, even through a non-translated entity. If the root has neither explicit locale nor translations, the first translated entity in each branch chooses its own default and passes it onward. There is no per-include locale override. Translation JOINs are only added when fields used by a projection, condition or sort need them; full translated models include all translated fields.
+The effective locale and fallback are inherited by related reads and predicates, even through a non-translated entity. If the root has neither an explicit nor a default locale, the first translated entity with a default locale in each branch chooses it and passes it onward; translated entities above it read NULL translated fields. There is no per-include locale override. Translation JOINs are only added when fields used by a projection, condition or sort need them; full translated models include all translated fields.
 
 ## TranslationStore
 
@@ -245,20 +251,21 @@ Obtain the store from `$repository->translations()`:
 
 ```php
 TranslationStore::get(int|string $id, string $locale): ?array; // array<string, string|null>|null
+TranslationStore::all(int|string $id): array; // array<string, array<string, string|null>> by locale
 TranslationStore::save(int|string $id, string $locale, array $patch): void;
 TranslationStore::seed(int|string $id, array $locales, array $values): int; // list<string> locales
 TranslationStore::delete(int|string $id, string $locale): int;
 ```
 
-`get()` reads only the requested locale, without fallback, and returns all configured translated fields. NULL means no translation row; an existing row whose fields are all NULL returns an array. `save()` accepts `array<string, string|null>` restricted to translated fields:
+`get()` reads only the requested locale, without fallback, and returns all configured translated fields. NULL means no translation row; an existing row whose fields are all NULL returns an array. `all()` returns every stored locale of one owner with the same fields, keyed by locale in ascending order, or an empty array. `save()` accepts `array<string, string|null>` restricted to translated fields:
 
 - Existing row: update only fields present in the patch.
-- New row: omitted configured fields become NULL, even if their database columns have defaults.
+- New row: omitted configured fields take their column defaults. A column without a default gets NULL, which leaves the field to the fallback locale when reading.
 - Empty patch: validate ID and locale, then execute no SQL.
 
 Each nonempty save performs one native upsert, without reading or hydrating the owner. It is implemented for PostgreSQL/SQLite with `ON CONFLICT`, and MySQL/MariaDB with `ON DUPLICATE KEY UPDATE`. Other platforms are rejected.
 
-`seed()` fills locales that have no translation yet, for example every active locale of a new entity, and returns the number of rows inserted. Existing rows are left unchanged, so seeding can be repeated. Values follow the `save()` rules, and omitted fields of a new row are NULL. Duplicate locales collapse; an empty locale list or empty values execute no SQL. Only a conflict on the `(foreignKey, localeColumn)` pair is skipped: `ON CONFLICT ... DO NOTHING` on PostgreSQL/SQLite and a no-op `ON DUPLICATE KEY UPDATE` on MySQL/MariaDB, which reports existing rows as unchanged unless the connection enables `CLIENT_FOUND_ROWS`. Seeds larger than the parameter budget are split inside one transaction.
+`seed()` fills locales that have no translation yet, for example every active locale of a new entity, and returns the number of rows inserted. Existing rows are left unchanged, so seeding can be repeated. Values follow the `save()` rules, and omitted fields of a new row take their column defaults. Duplicate locales collapse; an empty locale list or empty values execute no SQL. Only a conflict on the `(foreignKey, localeColumn)` pair is skipped: `ON CONFLICT ... DO NOTHING` on PostgreSQL/SQLite and a no-op `ON DUPLICATE KEY UPDATE` on MySQL/MariaDB, which reports existing rows as unchanged unless the connection enables `CLIENT_FOUND_ROWS`. Seeds larger than the parameter budget are split inside one transaction.
 
 `delete()` removes one owner/locale pair and returns affected rows. These operations address physical owners, including soft-deleted owners, and participate in the caller's connection transaction. Database constraint errors propagate.
 
@@ -267,20 +274,20 @@ Each nonempty save performs one native upsert, without reading or hydrating the 
 Import the four concrete definitions from `Solo\Repository\Relations`:
 
 ```php
-BelongsTo::__construct(callable $target, string $foreignKey, callable $assign);
-HasOne::__construct(callable $target, string $foreignKey, callable $assign);
-HasMany::__construct(callable $target, string $foreignKey, callable $assign, array $orderBy = []);
+BelongsTo::__construct(callable $target, string $foreignKey, ?callable $assign = null);
+HasOne::__construct(callable $target, string $foreignKey, ?callable $assign = null);
+HasMany::__construct(callable $target, string $foreignKey, ?callable $assign = null, array $orderBy = []);
 BelongsToMany::__construct(
     callable $target,
     string $pivotTable,
     string $foreignPivotKey,
     string $relatedPivotKey,
-    callable $assign,
+    ?callable $assign = null,
     array $orderBy = [],
 );
 ```
 
-Names/keys are public readonly properties. `target` and `assign` are public readonly closures. The `orderBy` of a to-many definition is the default order of every load of that collection, normalized like `Load::orderBy`; a `Load` with its own non-empty order replaces it. The zero-argument `target` factory returns the target's `Mapping`; it is called lazily, so mappings may reference each other. Related rows are read through the owner repository's connection and parameter budget. Related keys reference primary keys:
+Names/keys are public readonly properties. `target` and `assign` are public readonly closures; `assign` is NULL for a relation that is only filtered by (`Filter::related()`) or linked (`links()`), and loading such a relation throws `LogicException` before SQL. The `orderBy` of a to-many definition is the default order of every load of that collection, normalized like `Load::orderBy`; a `Load` with its own non-empty order replaces it. The zero-argument `target` factory returns the target's `Mapping`; it is called lazily, on first use, so mappings may reference each other. Its result is kept for each owner mapping, so later loads, filters and link sets reuse it, and a factory may build the target `Mapping` itself. Related rows are read through the owner repository's connection and parameter budget. Related keys reference primary keys:
 
 | Definition | Foreign-key location | `assign` signature |
 |---|---|---|
@@ -405,7 +412,20 @@ $db->transactional(static function () use ($products, $id): void {
 
 Single CRUD statements and translation upserts do not add transactions. Composite operations use DBAL transactions, including nested savepoints in an outer transaction. The package does not close the application connection.
 
-For joins, aggregates over several tables, advisory locks, raw projections, special types or other SQL features, use `$db->createQueryBuilder()` or DBAL's execution methods directly. `ReadQuery` has no exported builder or `toDbal()` method. Such queries must apply any desired visibility, locale, parameter typing and result conversion explicitly; DBAL parameter types do not automatically convert fetched rows to mapped PHP types.
+For joins, aggregates over several tables, advisory locks, raw projections, special types or other SQL features, use DBAL. To keep a mapping's criteria in such SQL, start from `ReadQuery::queryBuilder()`:
+
+```php
+$query = $stocks->read()->queryBuilder('s', ['store_id' => $storeId]);
+$value = $query
+    ->select('COALESCE(SUM(b.remaining * b.price), 0)')
+    ->innerJoin('s', 'batches', 'b', 'b.product_id = s.product_id')
+    ->andWhere('b.remaining > ' . $query->createNamedParameter(0, Types::INTEGER))
+    ->fetchOne(); // a raw driver value
+```
+
+The builder has the mapped table under the alias in FROM, the criteria and the query's visibility in WHERE, and the translation joins the criteria need under the query locale. It selects nothing. Add your own conditions with `andWhere()`, never `where()`: DBAL's `where()` replaces the whole WHERE clause and silently drops the criteria and the soft-delete condition. Name the table by the alias, a lowercase SQL identifier, so that unquoted references such as `s.product_id` match it on every platform; the translation joins are named `<alias>_translation` and `<alias>_fallback`. Criteria values are bound as named parameters, so bind further values with `createNamedParameter()`. Each call validates the criteria and returns a new builder; nothing runs until the caller executes it.
+
+Everything the caller adds is plain DBAL: joined tables get no visibility or locale, and fetched rows are raw driver values, not converted through the mapping's types. Other DBAL queries, from `$db->createQueryBuilder()` or DBAL's execution methods, must apply any desired visibility, locale, parameter typing and result conversion explicitly.
 
 ## Errors and supported boundaries
 

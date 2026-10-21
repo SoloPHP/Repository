@@ -11,6 +11,7 @@ use Solo\Repository\Internal\Database;
 use Solo\Repository\Internal\Dialect;
 use Solo\Repository\Internal\Locale;
 use Solo\Repository\Internal\RowMapper;
+use UnexpectedValueException;
 
 final readonly class TranslationStore
 {
@@ -38,7 +39,7 @@ final readonly class TranslationStore
     {
         $id = $this->mapper->id($id);
         $locale = (new Locale($locale))->locale;
-        $sql = 'SELECT ' . implode(', ', array_map($this->db->quote(...), array_keys($this->translations->columns)))
+        $sql = 'SELECT ' . $this->fieldList()
             . ' FROM ' . $this->db->quote($this->translations->table)
             . ' WHERE ' . $this->db->quote($this->translations->foreignKey) . ' = ?'
             . ' AND ' . $this->db->quote($this->translations->localeColumn) . ' = ?';
@@ -59,7 +60,48 @@ final readonly class TranslationStore
         }
     }
 
-    /** @param array<string, string|null> $patch */
+    /**
+     * Every stored translation of the owner, keyed by locale in ascending order.
+     *
+     * @return array<string, array<string, string|null>>
+     */
+    public function all(int|string $id): array
+    {
+        $id = $this->mapper->id($id);
+        $localeColumn = $this->translations->localeColumn;
+        $locale = $this->db->quote($localeColumn);
+        $sql = 'SELECT ' . $locale . ', ' . $this->fieldList()
+            . ' FROM ' . $this->db->quote($this->translations->table)
+            . ' WHERE ' . $this->db->quote($this->translations->foreignKey) . ' = ?'
+            . ' ORDER BY ' . $locale;
+        $result = $this->db->connection->executeQuery($sql, [$id], [$this->idType()]);
+        try {
+            $rows = $result->fetchAllAssociative();
+        } finally {
+            $result->free();
+        }
+
+        $translations = [];
+        foreach ($rows as $row) {
+            $code = $row[$localeColumn];
+            if (!is_string($code)) {
+                throw new UnexpectedValueException('A translation locale must be a string.');
+            }
+            unset($row[$localeColumn]);
+            /** @var array<string, string|null> $fields Translated columns convert to strings or NULL. */
+            $fields = $this->mapper->convert($row);
+            $translations[$code] = $fields;
+        }
+
+        return $translations;
+    }
+
+    /**
+     * Writes the patched fields of one locale. A new row gets only these fields; the others take
+     * their column defaults.
+     *
+     * @param array<string, string|null> $patch
+     */
     public function save(int|string $id, string $locale, array $patch): void
     {
         $id = $this->mapper->id($id);
@@ -72,7 +114,7 @@ final readonly class TranslationStore
 
     /**
      * Inserts the translation of every locale that has none yet; existing rows stay unchanged.
-     * As in save(), omitted fields of a new row are NULL.
+     * As in save(), omitted fields of a new row take their column defaults.
      *
      * @param list<string> $locales
      * @param array<string, string|null> $values
@@ -139,8 +181,9 @@ final readonly class TranslationStore
     }
 
     /**
-     * Inserts one complete row per locale. A conflicting row gets the given values, or with
-     * $update false stays unchanged. Statements split at the parameter limit run in one transaction.
+     * Inserts one row per locale with the given values; omitted fields take their column defaults.
+     * A conflicting row gets the given values, or with $update false stays unchanged. Statements
+     * split at the parameter limit run in one transaction.
      *
      * @param non-empty-list<string> $locales
      * @param array<string, string|null> $values
@@ -176,11 +219,7 @@ final readonly class TranslationStore
         };
         // Keep a table named "excluded" distinct from the proposed-row pseudo-table.
         $alias = $mysql ? null : 'br_target';
-        $columns = [
-            $this->translations->foreignKey,
-            $this->translations->localeColumn,
-            ...array_keys($this->translations->columns),
-        ];
+        $columns = [$this->translations->foreignKey, $this->translations->localeColumn, ...array_keys($values)];
 
         $idType = $this->idType();
         $statements = [];
@@ -190,9 +229,9 @@ final readonly class TranslationStore
             foreach ($chunk as $locale) {
                 array_push($parameters, $id, $locale);
                 array_push($types, $idType, Types::STRING);
-                foreach ($this->translations->columns as $column => $type) {
-                    $parameters[] = $values[$column] ?? null;
-                    $types[] = $type;
+                foreach ($values as $column => $value) {
+                    $parameters[] = $value;
+                    $types[] = $this->translations->columns[$column];
                 }
             }
             $statements[] = [
@@ -214,8 +253,13 @@ final readonly class TranslationStore
         return count($statements) > 1 ? $this->db->connection->transactional($execute) : $execute();
     }
 
+    private function fieldList(): string
+    {
+        return implode(', ', array_map($this->db->quote(...), array_keys($this->translations->columns)));
+    }
+
     private function idType(): string
     {
-        return $this->mapping->columnType($this->mapping->primaryKey);
+        return $this->mapping->columnType($this->mapping->requirePrimaryKey('Translations'));
     }
 }

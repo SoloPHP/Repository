@@ -17,9 +17,9 @@ final readonly class BelongsTo extends Relation
 {
     /**
      * @param callable(): Mapping<TTarget> $target
-     * @param callable(TOwner, TTarget|null): TOwner $assign
+     * @param (callable(TOwner, TTarget|null): TOwner)|null $assign NULL when the relation is never loaded.
      */
-    public function __construct(callable $target, public string $foreignKey, callable $assign)
+    public function __construct(callable $target, public string $foreignKey, ?callable $assign = null)
     {
         Identifier::assert($foreignKey);
         parent::__construct($target, $assign);

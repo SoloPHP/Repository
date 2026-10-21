@@ -8,8 +8,10 @@ use Closure;
 use Doctrine\DBAL\Types\Type;
 use Doctrine\DBAL\Types\Types;
 use InvalidArgumentException;
+use LogicException;
 use Solo\Repository\Internal\Identifier;
 use Solo\Repository\Internal\KeyType;
+use Solo\Repository\Relations\BelongsTo;
 use Solo\Repository\Relations\Relation;
 
 /**
@@ -20,26 +22,33 @@ final readonly class Mapping
     /** @var Closure(array<string, mixed>): T */
     public Closure $hydrate;
 
+    /** Whether the database generates the primary key; always false without one. */
+    public bool $generatedId;
+
     /** @var array<string, string> */
     private array $readColumns;
 
     /**
      * @param array<string, string> $columns
      * @param callable(array<string, mixed>): T $hydrate
+     * @param string|null $primaryKey NULL for a table without a single-column key, such as one with a
+     *                                composite key; its rows are then read and changed by criteria only.
      * @param array<string, Relation> $relations
      */
     public function __construct(
         public string $table,
         public array $columns,
         callable $hydrate,
-        public string $primaryKey = 'id',
-        public bool $generatedId = true,
+        public ?string $primaryKey = 'id',
+        bool $generatedId = true,
         public ?string $softDeleteColumn = null,
         public ?Translations $translations = null,
         public array $relations = [],
     ) {
         Identifier::assert($table);
-        Identifier::assert($primaryKey);
+        if ($primaryKey !== null) {
+            Identifier::assert($primaryKey);
+        }
         self::validateColumns($columns);
         $this->validateRelations($relations);
 
@@ -47,16 +56,12 @@ final readonly class Mapping
             throw new InvalidArgumentException('Translated columns must not overlap with base columns.');
         }
 
-        $keyType = KeyType::of($this->columnType($primaryKey));
-        if ($keyType === null) {
-            throw new InvalidArgumentException(
-                'The primary key must use an integer, string, ASCII string or GUID type.',
-            );
+        if ($primaryKey !== null) {
+            $this->validatePrimaryKey($primaryKey, $generatedId);
+        } elseif ($translations !== null) {
+            throw new InvalidArgumentException('Translations require a primary key.');
         }
-
-        if ($generatedId && $keyType !== KeyType::Integer) {
-            throw new InvalidArgumentException('Generated IDs require a smallint, integer or bigint primary key.');
-        }
+        $this->generatedId = $primaryKey !== null && $generatedId;
 
         if ($softDeleteColumn !== null) {
             Identifier::assert($softDeleteColumn);
@@ -75,6 +80,14 @@ final readonly class Mapping
 
         $this->hydrate = Closure::fromCallable($hydrate);
         $this->readColumns = $columns + ($translations->columns ?? []);
+    }
+
+    /** @internal The primary key that an operation addresses rows by. */
+    public function requirePrimaryKey(string $operation): string
+    {
+        return $this->primaryKey ?? throw new LogicException(
+            sprintf('%s requires a primary key; mapping "%s" has none.', $operation, $this->table),
+        );
     }
 
     public function columnType(string $column): string
@@ -120,7 +133,26 @@ final readonly class Mapping
                 );
             }
             Identifier::assert($name);
+            if ($this->primaryKey === null && !$relation instanceof BelongsTo) {
+                throw new InvalidArgumentException(
+                    sprintf('Relation "%s" requires a primary key on its owner.', $name),
+                );
+            }
             $this->columnType($relation->ownerKey($this));
+        }
+    }
+
+    private function validatePrimaryKey(string $primaryKey, bool $generatedId): void
+    {
+        $keyType = KeyType::of($this->columnType($primaryKey));
+        if ($keyType === null) {
+            throw new InvalidArgumentException(
+                'The primary key must use an integer, string, ASCII string or GUID type.',
+            );
+        }
+
+        if ($generatedId && $keyType !== KeyType::Integer) {
+            throw new InvalidArgumentException('Generated IDs require a smallint, integer or bigint primary key.');
         }
     }
 

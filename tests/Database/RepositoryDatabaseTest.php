@@ -220,6 +220,26 @@ final class RepositoryDatabaseTest extends DatabaseTestCase
         self::assertNull($query->avg('amount', ['sku' => 'missing']));
     }
 
+    public function testQueryBuilderMatchesUnquotedAliasReferencesOnTheServer(): void
+    {
+        $repository = new Repository($this->connection, $this->mapping(true));
+        $repository->insertMany([
+            ['sku' => 'a', 'amount' => '12.30', 'active' => true],
+            ['sku' => 'b', 'amount' => '0.70', 'active' => true],
+            ['sku' => 'c', 'amount' => '5.00', 'active' => false],
+            ['sku' => 'd', 'amount' => '9.00', 'active' => true],
+        ]);
+        $repository->deleteBy(['sku' => 'd']);
+
+        $query = $repository->read()->queryBuilder('i', ['active' => true]);
+        $row = $query->select('COUNT(*) AS items', 'SUM(i.amount) AS total')
+            ->andWhere('i.sku <> ' . $query->createNamedParameter('b'))
+            ->fetchAssociative();
+
+        self::assertSame(1, (int) $row['items']);
+        self::assertSame('12.30', number_format((float) $row['total'], 2, '.', ''));
+    }
+
     private function mapping(bool $softDelete = false): Mapping
     {
         return new Mapping(

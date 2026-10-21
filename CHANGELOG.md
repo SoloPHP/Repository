@@ -10,16 +10,22 @@ Initial release of **Solo Repository** (`solophp/repository`) with the
 - Explicit, typed `Mapping` and composition-based `Repository`; constructing
   repositories and queries never opens a database connection.
 - Reusable `ReadQuery` with projection reads, `sum`/`min`/`max`/`avg` aggregates
-  over the same criteria as `count`, and bounded integer-ID iteration.
+  over the same criteria as `count`, bounded integer-ID iteration, and
+  `queryBuilder()`, a DBAL `QueryBuilder` over the rows its criteria select.
+- Mappings without a primary key for tables with composite keys; their rows are
+  read and changed by criteria.
 - `Filter::all`, `any`, `not`, and related `EXISTS` predicates.
 - Criteria values and written values must have a form of their field type before
   SQL, so a driver cannot silently turn `'12x'` into 12 or `'false'` into TRUE.
   Column ranges, precision and scale stay database constraints.
-- One translation fallback rule for reading, filtering, and sorting;
-  native PATCH upserts and insert-missing `seed()` through `TranslationStore`.
+- One translation fallback rule for reading, filtering, and sorting; an
+  optional default locale; native PATCH upserts, insert-missing `seed()` and
+  `all()` locales of one owner through `TranslationStore`.
 - Four relation types in `Solo\Repository\Relations`, generic over owner and
-  target, with lazy target-`Mapping` factories, nested batch loading, locale
-  inheritance, and explicit per-relation visibility and loading criteria.
+  target, with lazy target-`Mapping` factories called once per owner mapping,
+  nested batch loading, locale inheritance, and explicit per-relation
+  visibility and loading criteria. A relation without `assign` can be filtered
+  by and linked but not loaded.
   A `BelongsTo` target shared by many owners is fetched and hydrated once;
   `HasMany` and `BelongsToMany` accept a default collection order.
 - A bound-parameter budget that follows the platform limit and can be replaced
@@ -28,6 +34,32 @@ Initial release of **Solo Repository** (`solophp/repository`) with the
 - Soft delete with `purge`/`purgeBy`, `lockForUpdate` row locks, transactional
   `insertMany`, and many-to-many `LinkSet` operations.
 - SQLite tests, MySQL 8.4/MariaDB 12.3/PostgreSQL 17 integration tests, and a PHP/DBAL CI matrix.
+
+### Changes since 1.0.0-RC1
+
+- `ReadQuery::queryBuilder($alias, $criteria)` returns a DBAL `QueryBuilder`
+  with the mapped table under the alias in FROM, the criteria and visibility in
+  WHERE, and the translation joins the criteria need. It selects nothing; the
+  caller adds the SELECT, joins and grouping, and adds conditions with
+  `andWhere()`, because `where()` replaces the criteria and visibility.
+- `Mapping::$primaryKey` may be NULL. Operations by ID then throw before SQL,
+  translations and `HasOne`/`HasMany`/`BelongsToMany` relations of that owner
+  are rejected, and `BelongsTo`/`BelongsToMany` targets must have a key.
+- `Translations::$defaultLocale` is optional. Without it, a read that names no
+  locale joins no translations and returns NULL translated fields; conditions,
+  sorts and aggregates on translated fields then throw `LogicException`.
+- `TranslationStore::all($id)` returns the translations of every locale of one
+  owner, keyed by locale in ascending order.
+- **Behavior change:** `save()` and `seed()` insert only the given fields into
+  a new translation row, so omitted fields take their column defaults instead
+  of NULL. `save()` still keeps the omitted fields of an existing row.
+- The `assign` callback of a relation is optional. Loading a relation without
+  one throws `LogicException` before SQL.
+- A relation's target factory runs once per owner mapping instead of on every
+  load, filter and link set.
+- Reads without relation loads hydrate rows directly, every read releases rows
+  as it goes, relation batches reuse one prepared target read, and
+  `insertMany()` no longer copies its rows.
 
 ### Migrating from Base Repository
 
