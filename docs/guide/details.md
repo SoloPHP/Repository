@@ -113,6 +113,8 @@ Repository<T> ── Mapping<T> + Connection
 
 `Mapping` содержит `table`, `columns`, `hydrate`, `primaryKey = 'id'` (NULL для таблицы без одноколоночного ключа), `generatedId = true`, а также необязательные `translations`, `relations` и `softDeleteColumn`.
 
+`hydrate` может быть NULL у таблицы, которую читают только строками, например у таблицы связей без своей модели. Для неё работают `rows()`, агрегаты, `queryBuilder()`, связанные фильтры и запись, а `find()`, `findOneBy()`, `findBy()`, `iterateById()` и загрузка её как цели связи бросают `LogicException` до SQL.
+
 `columns` — ассоциативный массив `имя_колонки => DBAL type name`. Эти имена используются в фильтрах, сортировке, записи и строковых результатах. Это одновременно allowlist: неизвестное поле вызывает ошибку до SQL. CamelCase, приватные свойства и конструкторы остаются задачей mapper. SQL-идентификаторы проверяются и экранируются средствами DBAL; значения всегда передаются параметрами.
 
 Поддерживается один первичный ключ `int|string` либо его отсутствие. `primaryKey: null` описывает таблицу без одноколоночного ключа, например с составным ключом: её строки читаются, вставляются и меняются по критериям (`findBy`, `rows`, `count`, агрегаты, `queryBuilder`, `insert`, `insertMany`, `updateBy`, `deleteBy`, `purgeBy`). Операции по ID (`find`, `insertGetId`, `update`, `delete`, `restore`, `purge`, `lockForUpdate`) бросают `LogicException`, а `iterateById` — `InvalidArgumentException`, всё до SQL. Сгенерированного ID у такой таблицы нет, а вставляемая строка содержит хотя бы одну колонку.

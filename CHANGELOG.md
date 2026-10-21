@@ -13,7 +13,7 @@ Initial release of **Solo Repository** (`solophp/repository`) with the
   over the same criteria as `count`, bounded integer-ID iteration, and
   `queryBuilder()`, a DBAL `QueryBuilder` over the rows its criteria select.
 - Mappings without a primary key for tables with composite keys; their rows are
-  read and changed by criteria.
+  read and changed by criteria. A mapping read only as rows needs no hydrator.
 - `Filter::all`, `any`, `not`, and related `EXISTS` predicates.
 - Criteria values and written values must have a form of their field type before
   SQL, so a driver cannot silently turn `'12x'` into 12 or `'false'` into TRUE.
@@ -46,6 +46,11 @@ Initial release of **Solo Repository** (`solophp/repository`) with the
 - **Behavior change:** a `queryBuilder()` with IN criteria holds a list
   parameter. Run the builder itself, or pass `getParameterTypes()` along with
   `getParameters()` when its SQL becomes part of another statement.
+- The `hydrate` callback of a `Mapping` is optional, and `Mapping::$hydrate` is
+  nullable. A mapping without one is read through `rows()`, aggregates,
+  `queryBuilder()` and related filters, and written as usual; `find()`,
+  `findOneBy()`, `findBy()`, `iterateById()` and loading it as a relation
+  target throw `LogicException` before SQL.
 
 ### Changes since 1.0.0-RC1
 

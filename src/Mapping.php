@@ -19,8 +19,8 @@ use Solo\Repository\Relations\Relation;
  */
 final readonly class Mapping
 {
-    /** @var Closure(array<string, mixed>): T */
-    public Closure $hydrate;
+    /** @var (Closure(array<string, mixed>): T)|null NULL for a mapping that is never read into entities. */
+    public ?Closure $hydrate;
 
     /** Whether the database generates the primary key; always false without one. */
     public bool $generatedId;
@@ -30,7 +30,9 @@ final readonly class Mapping
 
     /**
      * @param array<string, string> $columns
-     * @param callable(array<string, mixed>): T $hydrate
+     * @param (callable(array<string, mixed>): T)|null $hydrate NULL for a table read only through rows(),
+     *                                                       aggregates and queryBuilder(); reads that build
+     *                                                       entities then throw before SQL.
      * @param string|null $primaryKey NULL for a table without a single-column key, such as one with a
      *                                composite key; its rows are then read and changed by criteria only.
      * @param array<string, Relation> $relations
@@ -38,7 +40,7 @@ final readonly class Mapping
     public function __construct(
         public string $table,
         public array $columns,
-        callable $hydrate,
+        ?callable $hydrate = null,
         public ?string $primaryKey = 'id',
         bool $generatedId = true,
         public ?string $softDeleteColumn = null,
@@ -78,7 +80,7 @@ final readonly class Mapping
             }
         }
 
-        $this->hydrate = Closure::fromCallable($hydrate);
+        $this->hydrate = $hydrate === null ? null : Closure::fromCallable($hydrate);
         $this->readColumns = $columns + ($translations->columns ?? []);
     }
 
@@ -87,6 +89,17 @@ final readonly class Mapping
     {
         return $this->primaryKey ?? throw new LogicException(
             sprintf('%s requires a primary key; mapping "%s" has none.', $operation, $this->table),
+        );
+    }
+
+    /**
+     * @internal The hydrator that an operation builds entities with.
+     * @return Closure(array<string, mixed>): T
+     */
+    public function requireHydrator(string $operation): Closure
+    {
+        return $this->hydrate ?? throw new LogicException(
+            sprintf('%s requires a hydrator; mapping "%s" has none.', $operation, $this->table),
         );
     }
 

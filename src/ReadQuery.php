@@ -103,6 +103,7 @@ final readonly class ReadQuery
         ?int $limit = null,
         int $offset = 0,
     ): array {
+        $this->mapping->requireHydrator('Reading entities');
         $query = $this->executor->selectAll($criteria, $orderBy, $limit, $offset);
         if ($this->loads->nodes === []) {
             return $limit === 0 ? [] : $this->executor->entities($query);
@@ -240,6 +241,7 @@ final readonly class ReadQuery
         if ($batchSize < 1) {
             throw new InvalidArgumentException('Batch size must be greater than zero.');
         }
+        $this->mapping->requireHydrator('Reading entities');
         $key = $this->mapping->primaryKey;
         if ($key === null || $this->executor->mapper()->keyType() !== KeyType::Integer) {
             throw new InvalidArgumentException('Keyset iteration requires an integer primary key.');

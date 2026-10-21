@@ -54,7 +54,7 @@ $products->update($id, ['price' => '179.90']); // affected rows; no model reread
 Mapping::__construct(
     string $table,
     array $columns,                 // array<string, string>: column => DBAL type name
-    callable $hydrate,             // callable(array<string, mixed>): T
+    ?callable $hydrate = null,     // callable(array<string, mixed>): T; NULL reads rows only
     ?string $primaryKey = 'id',    // NULL for a table without a single-column key
     bool $generatedId = true,
     ?string $softDeleteColumn = null,
@@ -68,7 +68,7 @@ Mapping::readColumns(): array;      // array<string, string>
 Mapping::relation(string $name): Relations\Relation;
 ```
 
-All constructor settings are public readonly properties; `hydrate` is stored as a `Closure`. `columnType()` accepts only base columns. `fieldType()` accepts base or translated fields. `readColumns()` returns their combined type map, and `relation()` looks up a configured relation. Unknown names throw `InvalidArgumentException`.
+All constructor settings are public readonly properties; `hydrate` is stored as a `Closure`, or NULL. A mapping without a hydrator, such as one for a link table that no model represents, is read as rows: `rows()`, aggregates, `queryBuilder()`, related filters and writes work, while `find()`, `findOneBy()`, `findBy()`, `iterateById()` and loading it as a relation target throw `LogicException` before SQL. `columnType()` accepts only base columns. `fieldType()` accepts base or translated fields. `readColumns()` returns their combined type map, and `relation()` looks up a configured relation. Unknown names throw `InvalidArgumentException`.
 
 Names in `columns`, criteria, projections, sorting and write data are database column names. A hydrator can convert them to camelCase properties or invoke any application constructor. Names form an allowlist, not SQL expressions. Table names, column names and relation names must match `[A-Za-z_][A-Za-z0-9_]*`; schema-qualified tables are not supported. Identifiers are quoted through DBAL and values are bound separately.
 
