@@ -306,7 +306,7 @@ Patches leave omitted fields unchanged; explicit NULL writes NULL. Unknown field
 
 ## 6. Migrate translations and stored data
 
-Replace `$translationConfig['fields']` with typed `Translations::columns` and specify a mandatory `defaultLocale`. The default read now resolves that locale without fallback. A former `$repo->find($id)` without locale no longer means “no translation JOIN” when translations are configured.
+Replace `$translationConfig['fields']` with typed `Translations::columns`. With a `defaultLocale`, a read that names no locale resolves that locale without fallback, so a former `$repo->find($id)` without locale no longer means “no translation JOIN”. Without one, such a read joins no translations, as in v3, but its translated fields come back NULL, and conditions, sorts and aggregates on them throw until the read calls `withLocale()`.
 
 `withLocale('uk', fallback: 'en')` overrides the default. The named parameter is now `fallback`, not v3's `fallbackLocale`. Passing no fallback does not implicitly reuse the mapping's default language.
 

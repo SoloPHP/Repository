@@ -15,9 +15,9 @@ Initial release of **Solo Repository** (`solophp/repository`) with the
 - Criteria values and written values must have a form of their field type before
   SQL, so a driver cannot silently turn `'12x'` into 12 or `'false'` into TRUE.
   Column ranges, precision and scale stay database constraints.
-- One translation fallback rule for reading, filtering, and sorting; native
-  PATCH upserts, insert-missing `seed()` and `all()` locales of one owner
-  through `TranslationStore`.
+- One translation fallback rule for reading, filtering, and sorting; an
+  optional default locale; native PATCH upserts, insert-missing `seed()` and
+  `all()` locales of one owner through `TranslationStore`.
 - Four relation types in `Solo\Repository\Relations`, generic over owner and
   target, with lazy target-`Mapping` factories called once per owner mapping,
   nested batch loading, locale inheritance, and explicit per-relation
@@ -34,6 +34,9 @@ Initial release of **Solo Repository** (`solophp/repository`) with the
 
 ### Changes since 1.0.0-RC1
 
+- `Translations::$defaultLocale` is optional. Without it, a read that names no
+  locale joins no translations and returns NULL translated fields; conditions,
+  sorts and aggregates on translated fields then throw `LogicException`.
 - `TranslationStore::all($id)` returns the translations of every locale of one
   owner, keyed by locale in ascending order.
 - **Behavior change:** `save()` and `seed()` insert only the given fields into

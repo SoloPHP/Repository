@@ -212,7 +212,7 @@ Translations::__construct(
     string $table,
     string $foreignKey,
     array $columns,                 // nonempty array<string, string>
-    string $defaultLocale,
+    ?string $defaultLocale = null,
     string $localeColumn = 'locale',
 );
 ```
@@ -233,11 +233,11 @@ $translations = new Translations(
 
 The schema must enforce a foreign key to the owner's PK and UNIQUE `(foreignKey, localeColumn)`. Matching PK/FK types and collation are the application's responsibility. That pair must be the only possible uniqueness conflict when inserting translation data: MySQL's native upsert can react to any unique index, so extra UNIQUE constraints on translated fields require a separate application write operation. Mapping does not inspect or create the schema.
 
-Ordinary model reads use `defaultLocale` with no fallback. `withLocale('uk', fallback: 'en')` resolves each field independently as `COALESCE(uk.field, en.field)`. A missing row or NULL field can fall back; `''` and `'0'` remain valid translations. SELECT, WHERE, ORDER BY and related predicates use the same resolved expression.
+Ordinary model reads use `defaultLocale` with no fallback. Without a default locale, a read that names no locale joins no translations: translated fields come back NULL, and conditions, sorts and aggregates on them throw a `LogicException` until the read calls `withLocale()`. `withLocale('uk', fallback: 'en')` resolves each field independently as `COALESCE(uk.field, en.field)`. A missing row or NULL field can fall back; `''` and `'0'` remain valid translations. SELECT, WHERE, ORDER BY and related predicates use the same resolved expression.
 
 Locale/fallback values must be nonempty after PHP `trim()`; their original text is otherwise preserved. The package does not canonicalize language tags or infer regional fallback. A fallback equal to the locale is redundant and removed. Calling `withLocale('en')` clears a previously configured fallback; the direct constructor rejects a fallback without a locale.
 
-The effective locale and fallback are inherited by related reads and predicates, even through a non-translated entity. If the root has neither explicit locale nor translations, the first translated entity in each branch chooses its own default and passes it onward. There is no per-include locale override. Translation JOINs are only added when fields used by a projection, condition or sort need them; full translated models include all translated fields.
+The effective locale and fallback are inherited by related reads and predicates, even through a non-translated entity. If the root has neither an explicit nor a default locale, the first translated entity with a default locale in each branch chooses it and passes it onward; translated entities above it read NULL translated fields. There is no per-include locale override. Translation JOINs are only added when fields used by a projection, condition or sort need them; full translated models include all translated fields.
 
 ## TranslationStore
 

@@ -315,6 +315,22 @@ final class RelationLoaderTest extends TestCase
         self::assertSame('Parent EN', $explicit->relation('category')->relation('parent')->value('name'));
     }
 
+    public function testTargetsWithoutADefaultLocaleReadNullTextUntilTheRootNamesOne(): void
+    {
+        $categories = $this->categoryMapping(defaultLocale: null);
+        $items = $this->itemRepository(translated: false, relations: [
+            'category' => new BelongsTo(static fn(): Mapping => $categories, 'category_id', self::assign('category')),
+        ]);
+        $this->resetLog();
+
+        self::assertNull($items->with(['category'])->find(1)->relation('category')->value('name'));
+        self::assertStringNotContainsString('category_translations', implode(' ', $this->logger->queries));
+        self::assertSame(
+            'Category EN',
+            $items->withLocale('en')->with(['category'])->find(1)->relation('category')->value('name'),
+        );
+    }
+
     public function testInheritedFallbackIsSharedByRelationProjectionFilterAndOrder(): void
     {
         $items = $this->items->withLocale('uk', 'en')->with([
@@ -789,7 +805,7 @@ final class RelationLoaderTest extends TestCase
         ), parameterLimit: 900);
     }
 
-    private function categoryMapping(array $relations = [], string $defaultLocale = 'en'): Mapping
+    private function categoryMapping(array $relations = [], ?string $defaultLocale = 'en'): Mapping
     {
         return new Mapping(
             'categories',
