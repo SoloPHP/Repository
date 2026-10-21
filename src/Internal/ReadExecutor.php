@@ -281,16 +281,41 @@ final readonly class ReadExecutor
         }
     }
 
-    /** @return list<Record<T>> */
+    /**
+     * Converted rows and their models, as relation loading needs them. Each fetched row is
+     * released once it is converted.
+     *
+     * @return list<Record<T>>
+     */
     public function records(QueryBuilder $query): array
     {
+        $rows = $this->fetchRows($query);
         $records = [];
-        foreach ($this->fetchRows($query) as $row) {
-            $row = $this->mapper->convert($row);
+        for ($index = 0, $count = count($rows); $index < $count; ++$index) {
+            $row = $this->mapper->convert($rows[$index]);
+            unset($rows[$index]);
             $records[] = new Record($row, $this->mapper->hydrate($row));
         }
 
         return $records;
+    }
+
+    /**
+     * Models of a read without relation loads. Each fetched row is released once its model exists.
+     *
+     * @return list<T>
+     */
+    public function entities(QueryBuilder $query): array
+    {
+        $rows = $this->fetchRows($query);
+        $entities = [];
+        for ($index = 0, $count = count($rows); $index < $count; ++$index) {
+            $row = $rows[$index];
+            unset($rows[$index]);
+            $entities[] = $this->mapper->hydrate($this->mapper->convert($row));
+        }
+
+        return $entities;
     }
 
     /**

@@ -427,6 +427,19 @@ final class RelationLoaderTest extends TestCase
         }
     }
 
+    public function testZeroLimitStillValidatesLoadsWithoutSql(): void
+    {
+        self::assertSame([], $this->items->with(['category.parent', 'tags'])->findBy(limit: 0));
+        self::assertSame([], $this->logger->queries);
+
+        $this->expectException(InvalidArgumentException::class);
+        try {
+            $this->items->with(['category.missing'])->findBy(limit: 0);
+        } finally {
+            self::assertSame([], $this->logger->queries);
+        }
+    }
+
     public function testInvalidNestedPathsAndLoadFiltersFailBeforeOwnerSql(): void
     {
         $loads = [
