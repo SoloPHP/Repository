@@ -470,12 +470,13 @@ The following v3 extension points have no equivalent in Solo Repository:
 | V3 feature | Migration |
 |---|---|
 | `RepositoryInterface` / subclassing `BaseRepository` | Own an instance of final `Repository`; define an application interface if needed |
-| `getConnection()` and protected `queryBuilder()/table()` | Inject `Connection` into the application component |
+| `getConnection()` and protected `queryBuilder()` | Inject `Connection` into the application component |
+| Protected `table()` with `applyCriteria()` | `read()->queryBuilder($alias, $criteria)`; add the SELECT, joins and `andWhere()` conditions to the returned DBAL builder |
 | `beginTransaction()/commit()/rollBack()/withTransaction()/inTransaction()` | Use DBAL `Connection` transaction methods |
 | `lockForUpdate($ids)` | `Repository::lockForUpdate($ids)` inside a transaction |
 | `withLock($key, $callback)` and `LockTimeoutException` | Application-owned advisory lock (`GET_LOCK`, `pg_advisory_lock`) on the same connection |
 | `sum()/avg()/min()/max()` | `ReadQuery::sum()/avg()/min()/max()` with the same criteria, locale and visibility |
-| `aggregate()` overrides on a joined `table()` | Explicit DBAL aggregate SQL |
+| `aggregate()` overrides on a joined `table()` | `read()->queryBuilder()` with the joins and the aggregate SELECT |
 | `afterWrite()` | Explicit application invalidation/events at the intended transaction boundary |
 | `scopes()` | Application functions returning criteria |
 | Reflection/static mapper convention | Explicit `hydrate` callback in `Mapping` |
@@ -489,18 +490,17 @@ $total = $query->sum('price', $criteria);     // converted by the field type: a 
 $latest = $query->max('created_at', $criteria); // DateTimeImmutable|null
 ```
 
-Aggregates over joined tables stay in DBAL:
+Aggregates over joined tables are DBAL SQL. Start from `queryBuilder()` to keep the list's criteria, soft delete and locale for the mapped table:
 
 ```php
-$total = $db->fetchOne(
-    'SELECT SUM(s.stock * b.price) FROM stocks s JOIN batches b ON b.product_id = s.product_id'
-        . ' WHERE s.store_id = ? AND s.deleted_at IS NULL',
-    [$storeId],
-    [Types::INTEGER],
-);
+$query = $stocks->read()->queryBuilder('s', $criteria);
+$total = $query
+    ->select('SUM(s.stock * b.price)')
+    ->innerJoin('s', 'batches', 'b', 'b.product_id = s.product_id')
+    ->fetchOne();
 ```
 
-This SQL owns its soft-delete and locale semantics; repository policies are not applied to arbitrary DBAL statements. Bind values and validate/quote dynamic identifiers. Raw DBAL results do not automatically pass through the repository's mapping.
+The builder applies the mapping's criteria and visibility only to the mapped table; joined tables and everything else the SQL adds own their soft-delete and locale semantics. V3 criteria keys for joined tables, such as `so.status`, become your own `andWhere()` conditions; `where()` would replace the mapping's criteria and soft-delete condition. Bind values with `createNamedParameter()` and validate/quote dynamic identifiers. Raw DBAL results do not automatically pass through the repository's mapping.
 
 For cache invalidation or outgoing events, decide whether they belong after a successful statement or after the encompassing transaction commits. V3's `afterWrite()` ran before commit and only observed that repository's base-table writes; blindly moving its body after every new call would still miss translation/pivot changes and rollback behavior. Keep that policy in the service orchestrating the workflow; no event bus or unit of work is added.
 

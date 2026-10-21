@@ -111,6 +111,19 @@ final readonly class ReadExecutor
     }
 
     /**
+     * The visible rows that match the criteria, under the caller's alias, with nothing selected.
+     *
+     * @param array<string, mixed>|Filter $criteria
+     */
+    public function filtered(string $alias, array|Filter $criteria): QueryBuilder
+    {
+        [$query, $fields] = $this->createQuery($alias);
+        $this->applyCriteria($query, $fields, $criteria);
+
+        return $query;
+    }
+
+    /**
      * One value selected over the visible rows that match the criteria.
      *
      * @param Closure(FieldResolver): string $select
@@ -374,11 +387,11 @@ final readonly class ReadExecutor
     }
 
     /** @return array{QueryBuilder, FieldResolver} */
-    private function createQuery(): array
+    private function createQuery(string $alias = self::ALIAS): array
     {
         $query = $this->db->connection->createQueryBuilder();
-        $fields = new FieldResolver($this->db, $this->mapping, $query, self::ALIAS, $this->locale);
-        $query->from($this->db->quote($this->mapping->table), self::ALIAS);
+        $fields = new FieldResolver($this->db, $this->mapping, $query, $alias, $this->locale);
+        $query->from($this->db->quote($this->mapping->table), $alias);
 
         return [$query, $fields];
     }

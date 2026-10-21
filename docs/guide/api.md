@@ -129,6 +129,7 @@ ReadQuery::rows(
     int $offset = 0,
 ): array;                                             // list<array<string, mixed>>
 ReadQuery::iterateById(array|Filter $criteria = [], int $batchSize = 500): iterable;
+ReadQuery::queryBuilder(string $alias, array|Filter $criteria = []): QueryBuilder;
 ```
 
 `criteria` is an associative array or `Filter`. `orderBy` maps readable fields to `ASC`/`DESC`, case-insensitively. All `with*()` methods return a new query; executing a query does not consume its settings. `with()` replaces the complete include list, and `with([])` clears it.
@@ -138,6 +139,7 @@ ReadQuery::iterateById(array|Filter $criteria = [], int $batchSize = 500): itera
 - `rows()` returns only the selected, DBAL-converted fields and never calls the hydrator. It rejects nonempty includes; use `with([])` on that branch.
 - `count()` and `exists()` do not hydrate models or resolve/load includes. Relation predicates in their criteria still apply. `exists()` selects a constant with a one-row limit.
 - `sum()`, `min()`, `max()` and `avg()` aggregate one readable field, including a translated field under the query locale, over the rows `count()` would count. `sum()`, `min()` and `max()` convert the result through the field's DBAL type, so a decimal sum is an exact string and `max('created_at')` a `DateTimeImmutable`. `sum()` returns zero of that type when nothing matches; `min()`, `max()` and `avg()` return NULL. `avg()` returns a float. `sum()` and `avg()` require a smallint, integer, bigint, decimal, float or smallfloat field and reject other fields before SQL.
+- `queryBuilder()` returns a new DBAL `QueryBuilder` over the rows `count()` would count, for SQL the other methods cannot express; see [the DBAL escape hatch](#transactions-and-the-dbal-escape-hatch). It rejects nonempty includes.
 - Without `orderBy`, ordering is unspecified. Add the primary key as a final tie-breaker for stable pages. Negative limit/offset values are rejected. `limit: 0` validates query settings and returns an empty list without executing the read.
 
 ```php
@@ -406,7 +408,20 @@ $db->transactional(static function () use ($products, $id): void {
 
 Single CRUD statements and translation upserts do not add transactions. Composite operations use DBAL transactions, including nested savepoints in an outer transaction. The package does not close the application connection.
 
-For joins, aggregates over several tables, advisory locks, raw projections, special types or other SQL features, use `$db->createQueryBuilder()` or DBAL's execution methods directly. `ReadQuery` has no exported builder or `toDbal()` method. Such queries must apply any desired visibility, locale, parameter typing and result conversion explicitly; DBAL parameter types do not automatically convert fetched rows to mapped PHP types.
+For joins, aggregates over several tables, advisory locks, raw projections, special types or other SQL features, use DBAL. To keep a mapping's criteria in such SQL, start from `ReadQuery::queryBuilder()`:
+
+```php
+$query = $stocks->read()->queryBuilder('s', ['store_id' => $storeId]);
+$value = $query
+    ->select('COALESCE(SUM(b.remaining * b.price), 0)')
+    ->innerJoin('s', 'batches', 'b', 'b.product_id = s.product_id')
+    ->andWhere('b.remaining > ' . $query->createNamedParameter(0, Types::INTEGER))
+    ->fetchOne(); // a raw driver value
+```
+
+The builder has the mapped table under the alias in FROM, the criteria and the query's visibility in WHERE, and the translation joins the criteria need under the query locale. It selects nothing. Add your own conditions with `andWhere()`, never `where()`: DBAL's `where()` replaces the whole WHERE clause and silently drops the criteria and the soft-delete condition. Name the table by the alias, a lowercase SQL identifier, so that unquoted references such as `s.product_id` match it on every platform; the translation joins are named `<alias>_translation` and `<alias>_fallback`. Criteria values are bound as named parameters, so bind further values with `createNamedParameter()`. Each call validates the criteria and returns a new builder; nothing runs until the caller executes it.
+
+Everything the caller adds is plain DBAL: joined tables get no visibility or locale, and fetched rows are raw driver values, not converted through the mapping's types. Other DBAL queries, from `$db->createQueryBuilder()` or DBAL's execution methods, must apply any desired visibility, locale, parameter typing and result conversion explicitly.
 
 ## Errors and supported boundaries
 

@@ -555,6 +555,22 @@ final class TranslatedReadQueryTest extends TestCase
         );
     }
 
+    public function testQueryBuilderJoinsOnlyTheTranslationsItsCriteriaNeed(): void
+    {
+        $query = $this->repository->withLocale('uk', fallback: 'en');
+
+        $builder = $query->queryBuilder('i', ['name LIKE' => '%o%'])->select('i.id')->orderBy('i.id');
+        self::assertSame([1, 10], $builder->fetchFirstColumn());
+        self::assertSame(2, $this->joinCount($this->logger->queries[0]));
+        self::assertStringContainsString('"i_translation"."name"', $this->logger->queries[0]);
+        self::assertStringContainsString('"i_fallback"."name"', $this->logger->queries[0]);
+        self::assertSame(['uk', 'en', '%o%'], array_values($this->logger->parameters[0]));
+
+        $this->resetLog();
+        self::assertSame([2], $query->queryBuilder('i', ['enabled' => false])->select('i.id')->fetchFirstColumn());
+        self::assertSame(0, $this->joinCount($this->logger->queries[0]));
+    }
+
     public function testWithoutADefaultLocaleReadsJoinNoTranslationsAndReturnNullText(): void
     {
         $items = new Repository($this->connection, $this->mapping(defaultLocale: null));
@@ -593,6 +609,7 @@ final class TranslatedReadQueryTest extends TestCase
         yield 'order' => [static fn(ReadQuery $query): mixed => $query->findBy([], ['name' => 'ASC'])];
         yield 'aggregate' => [static fn(ReadQuery $query): mixed => $query->max('name')];
         yield 'count' => [static fn(ReadQuery $query): mixed => $query->count(['name LIKE' => 'B%'])];
+        yield 'query builder' => [static fn(ReadQuery $query): mixed => $query->queryBuilder('i', ['name' => 'Bravo'])];
     }
 
     private function resetLog(): void

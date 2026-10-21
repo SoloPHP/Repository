@@ -36,6 +36,8 @@ final readonly class ReadQuery
         Types::SMALLFLOAT,
     ];
 
+    private const string ALIAS_PATTERN = '/\A[a-z_][a-z0-9_]*\z/';
+
     /** @var ReadExecutor<T> */
     private ReadExecutor $executor;
 
@@ -197,6 +199,31 @@ final readonly class ReadQuery
         }
 
         return $this->executor->convertedRows($query);
+    }
+
+    /**
+     * A DBAL query over the visible rows that match the criteria, for SQL the read methods cannot
+     * express. It selects nothing: add the SELECT and any joins, grouping or order, naming this
+     * table by the alias. Add conditions with andWhere(), never where(): where() replaces the
+     * whole WHERE clause and silently drops the criteria and the soft-delete condition. Values
+     * are bound as named parameters, so bind further values with createNamedParameter(). Its rows
+     * are not converted through the mapping.
+     *
+     * @param string $alias A lowercase SQL identifier, so that unquoted references match it on every platform.
+     * @param array<string, mixed>|Filter $criteria
+     */
+    public function queryBuilder(string $alias, array|Filter $criteria = []): QueryBuilder
+    {
+        if ($this->loads->nodes !== []) {
+            throw new InvalidArgumentException('Query builders cannot load relations; use with([]) for SQL.');
+        }
+        if (preg_match(self::ALIAS_PATTERN, $alias) !== 1) {
+            throw new InvalidArgumentException(
+                sprintf('Query alias "%s" must be a lowercase SQL identifier.', $alias),
+            );
+        }
+
+        return $this->executor->filtered($alias, $criteria);
     }
 
     /**

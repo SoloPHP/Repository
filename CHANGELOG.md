@@ -10,7 +10,8 @@ Initial release of **Solo Repository** (`solophp/repository`) with the
 - Explicit, typed `Mapping` and composition-based `Repository`; constructing
   repositories and queries never opens a database connection.
 - Reusable `ReadQuery` with projection reads, `sum`/`min`/`max`/`avg` aggregates
-  over the same criteria as `count`, and bounded integer-ID iteration.
+  over the same criteria as `count`, bounded integer-ID iteration, and
+  `queryBuilder()`, a DBAL `QueryBuilder` over the rows its criteria select.
 - `Filter::all`, `any`, `not`, and related `EXISTS` predicates.
 - Criteria values and written values must have a form of their field type before
   SQL, so a driver cannot silently turn `'12x'` into 12 or `'false'` into TRUE.
@@ -34,6 +35,11 @@ Initial release of **Solo Repository** (`solophp/repository`) with the
 
 ### Changes since 1.0.0-RC1
 
+- `ReadQuery::queryBuilder($alias, $criteria)` returns a DBAL `QueryBuilder`
+  with the mapped table under the alias in FROM, the criteria and visibility in
+  WHERE, and the translation joins the criteria need. It selects nothing; the
+  caller adds the SELECT, joins and grouping, and adds conditions with
+  `andWhere()`, because `where()` replaces the criteria and visibility.
 - `Translations::$defaultLocale` is optional. Without it, a read that names no
   locale joins no translations and returns NULL translated fields; conditions,
   sorts and aggregates on translated fields then throw `LogicException`.
