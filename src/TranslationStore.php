@@ -260,6 +260,6 @@ final readonly class TranslationStore
 
     private function idType(): string
     {
-        return $this->mapping->columnType($this->mapping->primaryKey);
+        return $this->mapping->columnType($this->mapping->requirePrimaryKey('Translations'));
     }
 }

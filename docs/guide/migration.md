@@ -117,7 +117,7 @@ $products = new Repository($db, new Mapping(
 ));
 ```
 
-The application's schema must match this mapping. `Mapping` does not create tables or discover columns. `columns` is an explicit allowlist keyed by **database column names**; those names also appear in criteria, patches and projected rows. Table names are plain identifiers, without a schema prefix. The primary key defaults to `id`, must be mapped and must be a single integer, string, ASCII string or GUID key.
+The application's schema must match this mapping. `Mapping` does not create tables or discover columns. `columns` is an explicit allowlist keyed by **database column names**; those names also appear in criteria, patches and projected rows. Table names are plain identifiers, without a schema prefix. The primary key defaults to `id`, must be mapped and must be a single integer, string, ASCII string or GUID key. A table with a composite key, such as stock keyed by product and store, maps with `primaryKey: null`. Address its rows with criteria, as in `updateBy(['product_id' => 1, 'store_id' => 2], $patch)`: operations by ID require a primary key.
 
 Before `hydrate` runs, DBAL converts every selected mapped field: `decimal` remains a string, `boolean` becomes a PHP boolean, JSON is decoded and `datetime_immutable` becomes `DateTimeImmutable`. Preserve NULL in nullable fields. Update old mappers that call `json_decode()` or construct dates from raw strings; they now receive converted values. You can reuse `Product::fromArray(...)` as the callback if it already accepts these types. The mapper need not expose database IDs or foreign keys as public model properties.
 

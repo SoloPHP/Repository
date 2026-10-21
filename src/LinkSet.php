@@ -24,6 +24,12 @@ final readonly class LinkSet
     /** @var Mapping<object> */
     private Mapping $target;
 
+    /** Primary key of the owner table. */
+    private string $ownerKey;
+
+    /** Primary key of the target table. */
+    private string $targetKey;
+
     /** @var RowMapper<object> */
     private RowMapper $ownerMapper;
 
@@ -42,6 +48,8 @@ final readonly class LinkSet
         }
         $this->relation = $definition;
         $this->target = $definition->resolve($mapping);
+        $this->ownerKey = $definition->ownerKey($mapping);
+        $this->targetKey = $definition->targetKey($this->target);
         $this->ownerMapper = new RowMapper($mapping, $db);
         $this->targetMapper = new RowMapper($this->target, $db);
     }
@@ -104,7 +112,7 @@ final readonly class LinkSet
     {
         [$condition, $parameters, $types] = $this->ownerCondition($id, 'br_link_pivot');
         $physical = $this->db->qualified('br_link_pivot', $this->relation->relatedPivotKey);
-        $canonical = $this->db->qualified('br_link_target', $this->target->primaryKey);
+        $canonical = $this->db->qualified('br_link_target', $this->targetKey);
         $result = $this->db->connection->executeQuery(
             'SELECT COALESCE(' . $canonical . ', ' . $physical . ')'
                 . ' FROM ' . $this->db->quote($this->relation->pivotTable) . ' ' . $this->db->quote('br_link_pivot')
@@ -127,9 +135,9 @@ final readonly class LinkSet
             return $id;
         }
         $canonical = $this->db->connection->fetchOne(
-            'SELECT ' . $this->db->quote($this->mapping->primaryKey)
+            'SELECT ' . $this->db->quote($this->ownerKey)
                 . ' FROM ' . $this->db->quote($this->mapping->table)
-                . ' WHERE ' . $this->db->quote($this->mapping->primaryKey) . ' = ?',
+                . ' WHERE ' . $this->db->quote($this->ownerKey) . ' = ?',
             [$id],
             [$this->ownerType()],
         );
@@ -151,10 +159,10 @@ final readonly class LinkSet
         $size = min(self::COMPOUND_SELECT_BATCH, $this->db->parameterLimit());
         foreach (array_chunk($ids, $size) as $chunk) {
             // The empty first branch gives PostgreSQL UUID parameters their column type.
-            $input = 'SELECT ' . $this->db->quote($this->target->primaryKey) . ' AS link_id FROM '
+            $input = 'SELECT ' . $this->db->quote($this->targetKey) . ' AS link_id FROM '
                 . $this->db->quote($this->target->table) . ' WHERE 1 = 0'
                 . str_repeat(' UNION ALL SELECT ?', count($chunk));
-            $target = $this->db->qualified('br_link_target', $this->target->primaryKey);
+            $target = $this->db->qualified('br_link_target', $this->targetKey);
             $candidate = $this->db->qualified('br_link_input', 'link_id');
             $result = $this->db->connection->executeQuery(
                 'SELECT COALESCE(' . $target . ', ' . $candidate . ')'
@@ -184,7 +192,7 @@ final readonly class LinkSet
         }
 
         $ownerAlias = $this->relation->pivotTable === 'br_link_owner' ? 'br_link_owner_1' : 'br_link_owner';
-        $primary = $this->db->qualified($ownerAlias, $this->mapping->primaryKey);
+        $primary = $this->db->qualified($ownerAlias, $this->ownerKey);
         $condition = 'EXISTS (SELECT 1 FROM ' . $this->db->quote($this->mapping->table)
             . ' ' . $this->db->quote($ownerAlias)
             . ' WHERE ' . $primary . ' = ' . $foreign . ' AND ' . $primary . ' = ?)';
@@ -224,7 +232,7 @@ final readonly class LinkSet
             $targetCondition = $foreign . ' IN (' . $placeholders . ')';
             if ($stringKey) {
                 $alias = $this->relation->pivotTable === 'br_link_target' ? 'br_link_target_1' : 'br_link_target';
-                $primary = $this->db->qualified($alias, $this->target->primaryKey);
+                $primary = $this->db->qualified($alias, $this->targetKey);
                 $target = 'SELECT 1 FROM ' . $this->db->quote($this->target->table) . ' ' . $this->db->quote($alias)
                     . ' WHERE ' . $primary . ' = ' . $foreign;
                 $targetCondition = 'EXISTS (' . $target . ' AND ' . $primary . ' IN (' . $placeholders . '))';
@@ -240,11 +248,11 @@ final readonly class LinkSet
 
     private function ownerType(): string
     {
-        return $this->mapping->columnType($this->mapping->primaryKey);
+        return $this->mapping->columnType($this->ownerKey);
     }
 
     private function targetType(): string
     {
-        return $this->target->columnType($this->target->primaryKey);
+        return $this->target->columnType($this->targetKey);
     }
 }

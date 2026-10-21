@@ -79,7 +79,7 @@ final readonly class ReadQuery
     /** @return T|null */
     public function find(int|string $id): ?object
     {
-        return $this->findOneBy([$this->mapping->primaryKey => $this->executor->mapper()->id($id)]);
+        return $this->findOneBy([$this->mapping->requirePrimaryKey('find()') => $this->executor->mapper()->id($id)]);
     }
 
     /**
@@ -238,11 +238,11 @@ final readonly class ReadQuery
         if ($batchSize < 1) {
             throw new InvalidArgumentException('Batch size must be greater than zero.');
         }
-        if ($this->executor->mapper()->keyType() !== KeyType::Integer) {
+        $key = $this->mapping->primaryKey;
+        if ($key === null || $this->executor->mapper()->keyType() !== KeyType::Integer) {
             throw new InvalidArgumentException('Keyset iteration requires an integer primary key.');
         }
 
-        $key = $this->mapping->primaryKey;
         $query = $this->executor->selectAll($criteria, [$key => 'ASC'], $batchSize);
         // Later batches bind one more parameter: the key to continue after.
         $this->db->assertParameters(count($query->getParameters()) + 1);
@@ -250,7 +250,7 @@ final readonly class ReadQuery
         $loader = new RelationLoader($this->db);
         $loads = $loader->prepare($this->mapping, $this->loads, $this->executor->locale());
 
-        return $this->iterate($query, $criteria, $batchSize, $loader, $loads);
+        return $this->iterate($query, $key, $criteria, $batchSize, $loader, $loads);
     }
 
     /**
@@ -260,12 +260,12 @@ final readonly class ReadQuery
      */
     private function iterate(
         QueryBuilder $query,
+        string $key,
         array|Filter $criteria,
         int $batchSize,
         RelationLoader $loader,
         array $loads,
     ): Generator {
-        $key = $this->mapping->primaryKey;
         while (true) {
             $records = $this->executor->records($query);
             $size = count($records);

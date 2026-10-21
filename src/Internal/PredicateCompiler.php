@@ -243,11 +243,11 @@ final class PredicateCompiler
                 $alias,
                 $this->db->quote($relation->pivotTable),
                 $pivot,
-                $this->db->qualified($alias, $target->primaryKey)
+                $this->db->qualified($alias, $relation->targetKey($target))
                     . ' = ' . $this->db->qualified($pivot, $relation->relatedPivotKey),
             );
             $query->where(
-                $this->db->qualified($parent->alias(), $owner->primaryKey)
+                $this->db->qualified($parent->alias(), $relation->ownerKey($owner))
                     . ' = ' . $this->db->qualified($pivot, $relation->foreignPivotKey),
             );
         } else {

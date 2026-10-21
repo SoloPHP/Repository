@@ -80,6 +80,10 @@ abstract readonly class Relation
             throw new UnexpectedValueException('A relation target factory must return a Mapping.');
         }
 
+        if ($target->primaryKey === null && !$this instanceof HasOne && !$this instanceof HasMany) {
+            throw new InvalidArgumentException('BelongsTo and BelongsToMany targets require a primary key.');
+        }
+
         if (!$this instanceof BelongsToMany) {
             self::assertCompatibleKeys(
                 $owner->columnType($this->ownerKey($owner)),
@@ -98,7 +102,9 @@ abstract readonly class Relation
      */
     public function ownerKey(Mapping $owner): string
     {
-        return $this instanceof BelongsTo ? $this->foreignKey : $owner->primaryKey;
+        return $this instanceof BelongsTo
+            ? $this->foreignKey
+            : $owner->requirePrimaryKey('Matching a relation owner');
     }
 
     /**
@@ -109,7 +115,9 @@ abstract readonly class Relation
      */
     public function targetKey(Mapping $target): string
     {
-        return $this instanceof HasOne || $this instanceof HasMany ? $this->foreignKey : $target->primaryKey;
+        return $this instanceof HasOne || $this instanceof HasMany
+            ? $this->foreignKey
+            : $target->requirePrimaryKey('Matching a relation target');
     }
 
     /**

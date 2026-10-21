@@ -330,6 +330,91 @@ final class RelationsDatabaseTest extends DatabaseTestCase
         ));
     }
 
+    public function testTablesWithoutAPrimaryKeyChangeByCriteriaAndLoadBothWays(): void
+    {
+        $schema = new Schema();
+        $shelves = $schema->createTable('repo_rel_shelves');
+        $shelves->addColumn('id', Types::INTEGER);
+        $shelves->setPrimaryKey(['id']);
+        $shelves->addColumn('name', Types::STRING, ['length' => 32]);
+        $currencies = $schema->createTable('repo_rel_currencies');
+        $currencies->addColumn('code', Types::STRING, ['length' => 3]);
+        $currencies->setPrimaryKey(['code']);
+        $stocks = $schema->createTable('repo_rel_stocks');
+        $stocks->addColumn('item_id', Types::INTEGER);
+        $stocks->addColumn('currency_code', Types::STRING, ['length' => 3]);
+        $stocks->addColumn('shelf_id', Types::INTEGER);
+        $stocks->addColumn('quantity', Types::INTEGER);
+        $stocks->setPrimaryKey(['item_id', 'currency_code']);
+        $this->createSchema($schema);
+        $this->insertRows('repo_rel_shelves', ['id' => Types::INTEGER, 'name' => Types::STRING], [
+            [1, 'North'],
+            [2, 'South'],
+        ]);
+        $this->insertRows('repo_rel_currencies', ['code' => Types::STRING], [['EUR'], ['UAH']]);
+
+        $shelfMapping = new Mapping(
+            'repo_rel_shelves',
+            ['id' => Types::INTEGER, 'name' => Types::STRING],
+            self::model(...),
+            generatedId: false,
+        );
+        $stockMapping = new Mapping(
+            'repo_rel_stocks',
+            [
+                'item_id' => Types::INTEGER,
+                'currency_code' => Types::STRING,
+                'shelf_id' => Types::INTEGER,
+                'quantity' => Types::INTEGER,
+            ],
+            self::model(...),
+            primaryKey: null,
+            relations: ['shelf' => new BelongsTo(static fn(): Mapping => $shelfMapping, 'shelf_id', self::assign('shelf'))],
+        );
+        $stockRepository = new Repository($this->connection, $stockMapping);
+        self::assertSame(3, $stockRepository->insertMany([
+            ['item_id' => 1, 'currency_code' => 'EUR', 'shelf_id' => 1, 'quantity' => 5],
+            ['item_id' => 1, 'currency_code' => 'UAH', 'shelf_id' => 2, 'quantity' => 2],
+            ['item_id' => 2, 'currency_code' => 'EUR', 'shelf_id' => 1, 'quantity' => 7],
+        ]));
+        self::assertSame(1, $stockRepository->updateBy(['item_id' => 1, 'currency_code' => 'UAH'], ['quantity' => 9]));
+
+        $loaded = $stockRepository->with(['shelf'])->findBy(orderBy: ['item_id' => 'ASC', 'currency_code' => 'ASC']);
+        self::assertSame(
+            [[1, 'EUR', 'North'], [1, 'UAH', 'South'], [2, 'EUR', 'North']],
+            array_map(static fn(object $stock): array => [
+                $stock->value('item_id'),
+                $stock->value('currency_code'),
+                $stock->relation('shelf')->value('name'),
+            ], $loaded),
+        );
+
+        $currencyRepository = new Repository($this->connection, new Mapping(
+            'repo_rel_currencies',
+            ['code' => Types::STRING],
+            self::model(...),
+            primaryKey: 'code',
+            generatedId: false,
+            relations: ['stocks' => new HasMany(
+                static fn(): Mapping => $stockMapping,
+                'currency_code',
+                self::assign('stocks'),
+                ['item_id' => 'ASC'],
+            )],
+        ));
+        $byCurrency = [];
+        foreach ($currencyRepository->with(['stocks'])->findBy(orderBy: ['code' => 'ASC']) as $currency) {
+            $byCurrency[$currency->value('code')] = array_map(
+                static fn(object $stock): array => [$stock->value('item_id'), $stock->value('quantity')],
+                $currency->relation('stocks'),
+            );
+        }
+        self::assertSame(['EUR' => [[1, 5], [2, 7]], 'UAH' => [[1, 9]]], $byCurrency);
+
+        self::assertSame(1, $stockRepository->deleteBy(['item_id' => 2]));
+        self::assertSame(2, $stockRepository->read()->count());
+    }
+
     public function testGuidUnionCanonicalizationBatchesAndDeduplicatesUppercaseIds(): void
     {
         $owners = $this->keyRepositories('guid', Types::GUID);

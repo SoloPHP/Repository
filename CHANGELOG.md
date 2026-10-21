@@ -12,6 +12,8 @@ Initial release of **Solo Repository** (`solophp/repository`) with the
 - Reusable `ReadQuery` with projection reads, `sum`/`min`/`max`/`avg` aggregates
   over the same criteria as `count`, bounded integer-ID iteration, and
   `queryBuilder()`, a DBAL `QueryBuilder` over the rows its criteria select.
+- Mappings without a primary key for tables with composite keys; their rows are
+  read and changed by criteria.
 - `Filter::all`, `any`, `not`, and related `EXISTS` predicates.
 - Criteria values and written values must have a form of their field type before
   SQL, so a driver cannot silently turn `'12x'` into 12 or `'false'` into TRUE.
@@ -40,6 +42,9 @@ Initial release of **Solo Repository** (`solophp/repository`) with the
   WHERE, and the translation joins the criteria need. It selects nothing; the
   caller adds the SELECT, joins and grouping, and adds conditions with
   `andWhere()`, because `where()` replaces the criteria and visibility.
+- `Mapping::$primaryKey` may be NULL. Operations by ID then throw before SQL,
+  translations and `HasOne`/`HasMany`/`BelongsToMany` relations of that owner
+  are rejected, and `BelongsTo`/`BelongsToMany` targets must have a key.
 - `Translations::$defaultLocale` is optional. Without it, a read that names no
   locale joins no translations and returns NULL translated fields; conditions,
   sorts and aggregates on translated fields then throw `LogicException`.

@@ -83,8 +83,8 @@ final readonly class Repository
     /** @param array<string, mixed> $data */
     public function insertGetId(array $data): int|string
     {
+        $key = $this->mapping->requirePrimaryKey('insertGetId()');
         $data = $this->validateInsert($data);
-        $key = $this->mapping->primaryKey;
         if (array_key_exists($key, $data)) {
             /** @var int|string $id Normalized by validateInsert(). */
             $id = $data[$key];
@@ -146,7 +146,7 @@ final readonly class Repository
     /** @param array<string, mixed> $patch */
     public function update(int|string $id, array $patch): int
     {
-        return $this->updateBy([$this->mapping->primaryKey => $this->mapper->id($id)], $patch);
+        return $this->updateBy([$this->mapping->requirePrimaryKey('update()') => $this->mapper->id($id)], $patch);
     }
 
     /**
@@ -167,7 +167,7 @@ final readonly class Repository
 
     public function delete(int|string $id): int
     {
-        return $this->deleteBy([$this->mapping->primaryKey => $this->mapper->id($id)]);
+        return $this->deleteBy([$this->mapping->requirePrimaryKey('delete()') => $this->mapper->id($id)]);
     }
 
     /** @param array<string, mixed>|Filter $criteria */
@@ -195,7 +195,7 @@ final readonly class Repository
         }
 
         return $this->executeUpdate(
-            [$this->mapping->primaryKey => $this->mapper->id($id)],
+            [$this->mapping->requirePrimaryKey('restore()') => $this->mapper->id($id)],
             [$this->mapping->softDeleteColumn => null],
             Visibility::Deleted,
         );
@@ -203,7 +203,7 @@ final readonly class Repository
 
     public function purge(int|string $id): int
     {
-        return $this->purgeBy([$this->mapping->primaryKey => $this->mapper->id($id)]);
+        return $this->purgeBy([$this->mapping->requirePrimaryKey('purge()') => $this->mapper->id($id)]);
     }
 
     /** @param array<string, mixed>|Filter $criteria */
@@ -221,6 +221,7 @@ final readonly class Repository
      */
     public function lockForUpdate(int|string|array $ids): void
     {
+        $column = $this->mapping->requirePrimaryKey('lockForUpdate()');
         $ids = array_values($this->mapper->ids(is_array($ids) ? $ids : [$ids]));
         if (!$this->db->connection->isTransactionActive()) {
             throw new LogicException('Row locks require an active transaction.');
@@ -229,8 +230,8 @@ final readonly class Repository
             sort($ids);
         }
 
-        $key = $this->db->quote($this->mapping->primaryKey);
-        $type = $this->mapping->columnType($this->mapping->primaryKey);
+        $key = $this->db->quote($column);
+        $type = $this->mapping->columnType($column);
         foreach (array_chunk($ids, $this->db->keyBatchSize()) as $chunk) {
             $query = $this->db->connection->createQueryBuilder()
                 ->select($key)
@@ -257,6 +258,13 @@ final readonly class Repository
     {
         $data = $this->validateColumns($data);
         $key = $this->mapping->primaryKey;
+        if ($key === null) {
+            if ($data === []) {
+                throw new InvalidArgumentException('Rows of a mapping without a primary key need at least one column.');
+            }
+
+            return $data;
+        }
         if (array_key_exists($key, $data)) {
             if (!is_int($data[$key]) && !is_string($data[$key])) {
                 throw new InvalidArgumentException('An explicit primary key must be an integer or string.');
@@ -340,7 +348,7 @@ final readonly class Repository
             return [
                 $this->db->platform()->getEmptyIdentityInsertSQL(
                     $this->db->quote($this->mapping->table),
-                    $this->db->quote($this->mapping->primaryKey),
+                    $this->db->quote($this->mapping->requirePrimaryKey('An insert of default values')),
                 ),
                 [],
                 [],

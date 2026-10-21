@@ -103,7 +103,7 @@ final class FieldResolver
                 $this->alias,
                 $this->db->quote($translations->table),
                 $alias,
-                $this->db->qualified($this->alias, $this->mapping->primaryKey)
+                $this->db->qualified($this->alias, $this->mapping->requirePrimaryKey('Translations'))
                     . ' = ' . $this->db->qualified($alias, $translations->foreignKey)
                     . ' AND ' . $this->db->qualified($alias, $translations->localeColumn) . ' = ' . $parameter,
             );

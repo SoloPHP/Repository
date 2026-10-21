@@ -55,7 +55,7 @@ Mapping::__construct(
     string $table,
     array $columns,                 // array<string, string>: column => DBAL type name
     callable $hydrate,             // callable(array<string, mixed>): T
-    string $primaryKey = 'id',
+    ?string $primaryKey = 'id',    // NULL for a table without a single-column key
     bool $generatedId = true,
     ?string $softDeleteColumn = null,
     ?Translations $translations = null,
@@ -82,6 +82,10 @@ The single primary key must be present in `columns` and use one of:
 | `string`, `ascii_string`, `guid` | Rejected; set `false` | Nonempty string; an integer ID becomes a string |
 
 Methods with a separate ID argument and explicit primary keys in insert data normalize that ID before SQL. Integer strings must match `0` or an optionally negative decimal integer without leading zeros: `12` and `-12` are valid; `01`, `+1`, `-0`, `1.5`, whitespace and `12x` are invalid. `integer`/`smallint` IDs outside the PHP integer range are rejected. `bigint` conversion follows DBAL and may return a string outside that range. Database column ranges and UUID syntax remain database/type concerns.
+
+Set `primaryKey: null` for a table without a single-column key, such as one with a composite key. Its rows are read, inserted and changed through criteria: `findBy()`, `rows()`, `count()`, the aggregates, `queryBuilder()`, `insert()`, `insertMany()`, `updateBy()`, `deleteBy()` and `purgeBy()`. Operations that address one row by ID (`find()`, `insertGetId()`, `update()`, `delete()`, `restore()`, `purge()` and `lockForUpdate()`) throw `LogicException` before SQL, and `iterateById()` throws `InvalidArgumentException`. Such a mapping has no generated ID, and every inserted row needs at least one column.
+
+A mapping without a primary key cannot have translations, and its only relations are `BelongsTo`: `HasOne`, `HasMany` and `BelongsToMany` match their owner by its primary key. It can be the target of `HasOne` and `HasMany`, but not of `BelongsTo` or `BelongsToMany`, which reference the target's primary key. Its `BelongsTo` relations can be filtered by with any key type; loading one needs an integer target key, because string keys follow the database collation and are matched in SQL through the owner's primary key. Loading a string-key `BelongsTo` from such an owner throws `LogicException` before SQL.
 
 Criteria values of integer fields follow the same rule without being converted: `findBy(['id' => '12x'])` throws instead of matching 12. See [Criteria and Filter](#criteria-and-filter) for the other field types.
 
