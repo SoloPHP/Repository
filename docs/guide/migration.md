@@ -194,7 +194,7 @@ Projected values are still converted through DBAL. `rows()` rejects nonempty eag
 
 ## 4. Rewrite criteria explicitly
 
-The array shorthand is still an AND of fields, but operators now belong in the **key**. Old nested operator arrays and automatic IN lists are rejected.
+The array shorthand is still an AND of fields, but operators now belong in the **key**. Old nested operator arrays and automatic IN lists are rejected. Because the key now carries the operator, build keys only from fixed strings, never from request input, and map user-selected filters to fixed keys through an allowlist; see [Criteria and Filter](api.md#criteria-and-filter).
 
 | V3 criterion | Solo Repository criterion |
 |---|---|

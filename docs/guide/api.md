@@ -164,6 +164,16 @@ An array combines its entries with AND. A bare field name means equality:
 
 Supported operators are `=`, `!=`, `>`, `>=`, `<`, `<=`, `IN`, `NOT IN`, `LIKE`, `NOT LIKE`. Operator spelling is case-insensitive. `= null` and `!= null` become `IS NULL` and `IS NOT NULL`. NULL with other operators is rejected. Arrays require explicit `IN`/`NOT IN`; their elements cannot be NULL or arrays. `IN []` is false, `NOT IN []` is true, and an empty criteria array is true.
 
+A key holds both the field and the operator, so build criteria keys only from fixed strings in your code, never from request parameters or other external input. Whoever controls a key chooses its operator: `filter[price >=]=0` would turn an equality into a comparison. When users choose the fields to filter by, map each allowed name to a fixed key:
+
+```php
+$keys = ['category' => 'category_id', 'min_price' => 'price >=', 'max_price' => 'price <='];
+$criteria = [];
+foreach (array_intersect_key($request, $keys) as $name => $value) {
+    $criteria[$keys[$name]] = $value;
+}
+```
+
 Every value, including each IN element, must have a form of its field type before SQL; a driver would otherwise reinterpret it silently, turning `'12x'` into 12 or, on MySQL, `'false'` into TRUE. Integer fields take `int` or a canonical decimal string. Decimal fields take finite numbers or plain decimal strings such as `'-12.50'`, without an exponent. Float fields take finite numbers or numeric strings with a finite value. Boolean fields take `bool`, `0`, `1`, `'0'` or `'1'`. String, text and GUID fields take strings, integers or `Stringable` objects; enum fields take strings or `Stringable` objects, because MySQL reads an integer as a member index. `simple_array` fields take arrays. A LIKE pattern therefore needs a string field. DBAL itself rejects mistyped dates, intervals and bcmath numbers; JSON, binary and custom types receive their values unchanged. The check covers the form of a value, not the column's range, precision or scale, which stay database constraints: SQLite keeps decimals as REAL, so a decimal beyond that range becomes infinity there.
 
 ```php
