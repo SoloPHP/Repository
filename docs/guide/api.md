@@ -54,7 +54,7 @@ $products->update($id, ['price' => '179.90']); // affected rows; no model reread
 Mapping::__construct(
     string $table,
     array $columns,                 // array<string, string>: column => DBAL type name
-    callable $hydrate,             // callable(array<string, mixed>): T
+    ?callable $hydrate = null,     // callable(array<string, mixed>): T; NULL reads rows only
     ?string $primaryKey = 'id',    // NULL for a table without a single-column key
     bool $generatedId = true,
     ?string $softDeleteColumn = null,
@@ -68,7 +68,7 @@ Mapping::readColumns(): array;      // array<string, string>
 Mapping::relation(string $name): Relations\Relation;
 ```
 
-All constructor settings are public readonly properties; `hydrate` is stored as a `Closure`. `columnType()` accepts only base columns. `fieldType()` accepts base or translated fields. `readColumns()` returns their combined type map, and `relation()` looks up a configured relation. Unknown names throw `InvalidArgumentException`.
+All constructor settings are public readonly properties; `hydrate` is stored as a `Closure`, or NULL. A mapping without a hydrator, such as one for a link table that no model represents, is read as rows: `rows()`, aggregates, `queryBuilder()`, related filters and writes work, while `find()`, `findOneBy()`, `findBy()`, `iterateById()` and loading it as a relation target throw `LogicException` before SQL. `columnType()` accepts only base columns. `fieldType()` accepts base or translated fields. `readColumns()` returns their combined type map, and `relation()` looks up a configured relation. Unknown names throw `InvalidArgumentException`.
 
 Names in `columns`, criteria, projections, sorting and write data are database column names. A hydrator can convert them to camelCase properties or invoke any application constructor. Names form an allowlist, not SQL expressions. Table names, column names and relation names must match `[A-Za-z_][A-Za-z0-9_]*`; schema-qualified tables are not supported. Identifiers are quoted through DBAL and values are bound separately.
 
@@ -168,7 +168,7 @@ An array combines its entries with AND. A bare field name means equality:
 ['status' => 'active', 'price >=' => '50.00', 'id IN' => [1, 2, 3]]
 ```
 
-Supported operators are `=`, `!=`, `>`, `>=`, `<`, `<=`, `IN`, `NOT IN`, `LIKE`, `NOT LIKE`. Operator spelling is case-insensitive. `= null` and `!= null` become `IS NULL` and `IS NOT NULL`. NULL with other operators is rejected. Arrays require explicit `IN`/`NOT IN`; their elements cannot be NULL or arrays. `IN []` is false, `NOT IN []` is true, and an empty criteria array is true.
+Supported operators are `=`, `!=`, `>`, `>=`, `<`, `<=`, `IN`, `NOT IN`, `LIKE`, `NOT LIKE`. Operator spelling is case-insensitive. `= null` and `!= null` become `IS NULL` and `IS NOT NULL`. NULL with other operators is rejected. Arrays require explicit `IN`/`NOT IN`; their elements cannot be NULL or arrays. `IN []` is false, `NOT IN []` is true, and an empty criteria array is true. A list is bound as one DBAL list parameter of values converted through the field type, which DBAL expands into one placeholder per value when the statement runs; a type without a DBAL list binding, such as boolean, binds each value separately.
 
 A key holds both the field and the operator, so build criteria keys only from fixed strings in your code, never from request parameters or other external input. Whoever controls a key chooses its operator: `filter[price >=]=0` would turn an equality into a comparison. When users choose the fields to filter by, map each allowed name to a fixed key:
 
@@ -209,7 +209,7 @@ $criteria = Filter::all(
 
 Related predicates filter owners without duplicating their rows. They do not restrict what `with()` loads. Field paths such as `tags.slug`, raw SQL, implicit scopes and collection sorting are not accepted. LIKE wildcards, case sensitivity, collation and NULL ordering follow the database.
 
-Every statement has a budget of bound parameters, including locale JOINs and nested EXISTS. By default it is the platform limit: 65,535 for PostgreSQL and MySQL/MariaDB, 32,766 for SQLite 3.32 or later, and 900 for older SQLite and other platforms. `new Repository($db, $mapping, parameterLimit: 2000)` replaces it for that repository, its queries and its relation loads, for example to reject large root IN filters early. The value must be positive and must not exceed what the server accepts; raise it only on a platform whose real limit is above the default. Keyset iteration reserves one parameter for continuation. Oversized root criteria are rejected rather than split: splitting would change ordering, pagination or Boolean semantics. Loader batches, `insertMany()` and `LinkSet` split their own internal work within this budget; an operation whose single row does not fit, such as a two-parameter pivot row under a budget of 1, throws InvalidArgumentException. Internal key lists (relation loads, `lockForUpdate()` and `LinkSet` deletes) also hold at most 5,000 keys per statement, because longer IN lists can exceed MySQL's range-optimizer memory and turn index lookups into full scans.
+Every statement has a budget of bound parameters, including locale JOINs and nested EXISTS, in which every value of an IN list counts. By default it is the platform limit: 65,535 for PostgreSQL and MySQL/MariaDB, 32,766 for SQLite 3.32 or later, and 900 for older SQLite and other platforms. `new Repository($db, $mapping, parameterLimit: 2000)` replaces it for that repository, its queries and its relation loads, for example to reject large root IN filters early. The value must be positive and must not exceed what the server accepts; raise it only on a platform whose real limit is above the default. Keyset iteration reserves one parameter for continuation. Oversized root criteria are rejected rather than split: splitting would change ordering, pagination or Boolean semantics. Loader batches, `insertMany()` and `LinkSet` split their own internal work within this budget; an operation whose single row does not fit, such as a two-parameter pivot row under a budget of 1, throws InvalidArgumentException. Internal key lists (relation loads, `lockForUpdate()` and `LinkSet` deletes) also hold at most 5,000 keys per statement, because longer IN lists can exceed MySQL's range-optimizer memory and turn index lookups into full scans.
 
 ## Translation metadata and locale
 
@@ -423,7 +423,7 @@ $value = $query
     ->fetchOne(); // a raw driver value
 ```
 
-The builder has the mapped table under the alias in FROM, the criteria and the query's visibility in WHERE, and the translation joins the criteria need under the query locale. It selects nothing. Add your own conditions with `andWhere()`, never `where()`: DBAL's `where()` replaces the whole WHERE clause and silently drops the criteria and the soft-delete condition. Name the table by the alias, a lowercase SQL identifier, so that unquoted references such as `s.product_id` match it on every platform; the translation joins are named `<alias>_translation` and `<alias>_fallback`. Criteria values are bound as named parameters, so bind further values with `createNamedParameter()`. Each call validates the criteria and returns a new builder; nothing runs until the caller executes it.
+The builder has the mapped table under the alias in FROM, the criteria and the query's visibility in WHERE, and the translation joins the criteria need under the query locale. It selects nothing. Add your own conditions with `andWhere()`, never `where()`: DBAL's `where()` replaces the whole WHERE clause and silently drops the criteria and the soft-delete condition. Name the table by the alias, a lowercase SQL identifier, so that unquoted references such as `s.product_id` match it on every platform; the translation joins are named `<alias>_translation` and `<alias>_fallback`. Criteria values are bound as named parameters, so bind further values with `createNamedParameter()`. An IN list is one `ArrayParameterType` parameter that DBAL expands when it runs the statement: run the builder itself, or pass `getParameterTypes()` along with `getParameters()` when its SQL becomes part of another statement. Each call validates the criteria and returns a new builder; nothing runs until the caller executes it.
 
 Everything the caller adds is plain DBAL: joined tables get no visibility or locale, and fetched rows are raw driver values, not converted through the mapping's types. Other DBAL queries, from `$db->createQueryBuilder()` or DBAL's execution methods, must apply any desired visibility, locale, parameter typing and result conversion explicitly.
 

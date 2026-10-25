@@ -116,6 +116,21 @@ function relationsAcceptTypedAssignCallbacks(Connection $connection): void
     acceptsAnyRepository($repository);
 }
 
+function mappingsWithoutAHydratorReadRows(Connection $connection): void
+{
+    $links = new Mapping(
+        table: 'product_categories',
+        columns: ['product_id' => Types::INTEGER, 'category_id' => Types::INTEGER],
+        primaryKey: null,
+    );
+    assertType('Solo\Repository\Mapping<object>', $links);
+
+    $repository = new Repository($connection, $links);
+    assertType('list<array<string, mixed>>', $repository->read()->rows(['category_id'], ['product_id IN' => [1, 2]]));
+
+    acceptsAnyRepository($repository);
+}
+
 function relationsInferTheirOwnerAndTarget(): void
 {
     $categories = categoryMapping();

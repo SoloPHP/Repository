@@ -91,7 +91,7 @@ final class FieldResolver
         if ($locale->fallback !== null) {
             $locales[$this->alias . '_fallback'] = $locale->fallback;
         }
-        $this->db->assertParameters(count($this->parameters->getParameters()) + count($locales));
+        $this->db->assertParameters(Database::boundCount($this->parameters) + count($locales));
 
         $parameterIndex = 0;
         foreach ($locales as $alias => $language) {

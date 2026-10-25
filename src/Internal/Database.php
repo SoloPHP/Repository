@@ -4,9 +4,12 @@ declare(strict_types=1);
 
 namespace Solo\Repository\Internal;
 
+use Doctrine\DBAL\ArrayParameterType;
 use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\ParameterType;
 use Doctrine\DBAL\Platforms\AbstractPlatform;
 use Doctrine\DBAL\Query\QueryBuilder;
+use Doctrine\DBAL\Types\Type;
 use InvalidArgumentException;
 use LogicException;
 
@@ -68,6 +71,51 @@ final class Database
         };
     }
 
+    /**
+     * Placeholders the query binds once DBAL expands its list parameters: a list counts every value.
+     */
+    public static function boundCount(QueryBuilder $query): int
+    {
+        $types = $query->getParameterTypes();
+        $count = 0;
+        foreach ($query->getParameters() as $key => $value) {
+            $count += is_array($value) && ($types[$key] ?? null) instanceof ArrayParameterType ? count($value) : 1;
+        }
+
+        return $count;
+    }
+
+    /**
+     * A list of typed values as one DBAL list parameter: the values converted to their database form and the
+     * list type of their binding, or NULL when DBAL has no list type for that binding (booleans, large objects).
+     * One list parameter costs a fraction of one named parameter per value, and DBAL expands it to the same SQL.
+     *
+     * @param list<mixed> $values
+     * @return array{list<mixed>, ArrayParameterType}|null
+     */
+    public function listParameter(string $type, array $values): ?array
+    {
+        $dbalType = Type::getType($type);
+        $listType = match ($dbalType->getBindingType()) {
+            ParameterType::INTEGER => ArrayParameterType::INTEGER,
+            ParameterType::STRING => ArrayParameterType::STRING,
+            ParameterType::ASCII => ArrayParameterType::ASCII,
+            ParameterType::BINARY => ArrayParameterType::BINARY,
+            default => null,
+        };
+        if ($listType === null) {
+            return null;
+        }
+
+        $platform = $this->platform();
+        $converted = [];
+        foreach ($values as $value) {
+            $converted[] = $dbalType->convertToDatabaseValue($value, $platform);
+        }
+
+        return [$converted, $listType];
+    }
+
     public function assertParameters(int $count): void
     {
         $limit = $this->parameterLimit();
@@ -110,7 +158,12 @@ final class Database
      */
     public function inList(QueryBuilder $query, string $field, string $type, array $keys): string
     {
-        $this->assertParameters(count($query->getParameters()) + count($keys));
+        $this->assertParameters(self::boundCount($query) + count($keys));
+        $list = $this->listParameter($type, $keys);
+        if ($list !== null) {
+            return $field . ' IN (' . $query->createNamedParameter($list[0], $list[1]) . ')';
+        }
+
         $parameters = [];
         foreach ($keys as $key) {
             $parameters[] = $query->createNamedParameter($key, $type);

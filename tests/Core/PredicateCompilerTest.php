@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Solo\Repository\Tests\Core;
 
 use DateTimeImmutable;
+use Doctrine\DBAL\ArrayParameterType;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\DriverManager;
 use Doctrine\DBAL\Query\QueryBuilder;
@@ -132,7 +133,7 @@ final class PredicateCompilerTest extends TestCase
         self::assertSame([4], $this->executeIds($builder->where($sql)));
     }
 
-    public function testDbalTypesAreKeptUntilExecutionIncludingEveryInElement(): void
+    public function testScalarsKeepTheirDbalTypeAndInListsBindAsOneList(): void
     {
         $date = new DateTimeImmutable('2026-01-03 12:00:00');
         $builder = $this->builder();
@@ -143,15 +144,36 @@ final class PredicateCompilerTest extends TestCase
         ]);
 
         self::assertIsString($sql);
-        self::assertSame($date, array_values($builder->getParameters())[0]);
-        self::assertSame([
-            Types::DATETIME_IMMUTABLE,
-            Types::INTEGER,
-            Types::INTEGER,
-            Types::INTEGER,
-            Types::BOOLEAN,
-        ], array_values($builder->getParameterTypes()));
+        self::assertSame([$date, [3, 4, 5], true], array_values($builder->getParameters()));
+        self::assertSame(
+            [Types::DATETIME_IMMUTABLE, ArrayParameterType::INTEGER, Types::BOOLEAN],
+            array_values($builder->getParameterTypes()),
+        );
         self::assertSame([3, 4], $this->executeIds($builder->where($sql)));
+    }
+
+    public function testInListsHoldDatabaseValuesAndBooleanListsBindEveryValue(): void
+    {
+        $builder = $this->builder();
+        $sql = $this->compiler($builder)->compile([
+            'created_at IN' => [
+                new DateTimeImmutable('2026-01-02 12:00:00'),
+                new DateTimeImmutable('2026-01-04 12:00:00'),
+            ],
+            // DBAL has no list type for booleans.
+            'enabled NOT IN' => [false],
+        ]);
+
+        self::assertIsString($sql);
+        self::assertSame(
+            [['2026-01-02 12:00:00', '2026-01-04 12:00:00'], false],
+            array_values($builder->getParameters()),
+        );
+        self::assertSame(
+            [ArrayParameterType::STRING, Types::BOOLEAN],
+            array_values($builder->getParameterTypes()),
+        );
+        self::assertSame([4], $this->executeIds($builder->where($sql)));
     }
 
     #[DataProvider('invalidCriteria')]
@@ -321,8 +343,22 @@ final class PredicateCompilerTest extends TestCase
         $sql = $this->compiler($builder)->compile(['id IN' => range(1, 899)]);
 
         self::assertIsString($sql);
-        self::assertCount(900, $builder->getParameters());
+        self::assertCount(2, $builder->getParameters());
+        self::assertSame(900, Database::boundCount($builder));
         self::assertSame([1], $this->executeIds($builder->andWhere($sql)));
+    }
+
+    public function testParameterLimitCountsEveryValueOfAnExistingList(): void
+    {
+        $builder = $this->builder();
+        $builder->setParameter('existing', range(1, 899), ArrayParameterType::INTEGER);
+        $builder->where('i.id IN (:existing)');
+
+        self::assertSame(899, Database::boundCount($builder));
+        self::assertIsString($this->compiler($builder)->compile(['name' => 'Alpha']));
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('parameter limit');
+        $this->compiler($builder)->compile(['id' => 1]);
     }
 
     public function testParameterLimitRejectsBeforeAddingAnyBindings(): void

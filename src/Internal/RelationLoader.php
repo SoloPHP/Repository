@@ -30,6 +30,7 @@ final readonly class RelationLoader
                 throw new LogicException(sprintf('Relation "%s" has no assign callback to load into.', $name));
             }
             $target = $relation->resolve($mapping);
+            $target->requireHydrator(sprintf('Loading relation "%s"', $name));
             if ($mapping->primaryKey === null && !self::matchesInPhp($relation, $target)) {
                 throw new LogicException(sprintf(
                     'Loading relation "%s" by string keys requires a primary key; mapping "%s" has none.',
@@ -46,7 +47,7 @@ final readonly class RelationLoader
                 $executor,
                 $query,
                 $this->prepare($target, $node->children, $executor->locale()),
-                $this->db->keyBatchSize(count($query->getParameters())),
+                $this->db->keyBatchSize(Database::boundCount($query)),
             );
         }
 

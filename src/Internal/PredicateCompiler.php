@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Solo\Repository\Internal;
 
+use Doctrine\DBAL\ArrayParameterType;
 use Doctrine\DBAL\Query\QueryBuilder;
 use InvalidArgumentException;
 use Solo\Repository\Filter;
@@ -48,9 +49,9 @@ final class PredicateCompiler
         }
 
         // Reject oversized criteria before binding them; translation joins bind their locales while rendering.
-        $this->db->assertParameters(count($this->builder->getParameters()) + self::countValues($predicate));
+        $this->db->assertParameters(Database::boundCount($this->builder) + self::countValues($predicate));
         $sql = $this->render($predicate, $this->fields);
-        $this->db->assertParameters(count($this->builder->getParameters()));
+        $this->db->assertParameters(Database::boundCount($this->builder));
 
         return $sql;
     }
@@ -216,6 +217,11 @@ final class PredicateCompiler
             return $field . ' ' . $predicate->operator . ' ' . $this->bind($predicate->value, $predicate->type);
         }
 
+        $list = $this->db->listParameter($predicate->type, array_values($predicate->value));
+        if ($list !== null) {
+            return $field . ' ' . $predicate->operator . ' (' . $this->bind($list[0], $list[1]) . ')';
+        }
+
         $parameters = [];
         foreach ($predicate->value as $element) {
             $parameters[] = $this->bind($element, $predicate->type);
@@ -269,7 +275,7 @@ final class PredicateCompiler
         return 'EXISTS (' . $query->getSQL() . ')';
     }
 
-    private function bind(mixed $value, string $type): string
+    private function bind(mixed $value, string|ArrayParameterType $type): string
     {
         do {
             $name = 'predicate' . ++$this->parameterIndex;

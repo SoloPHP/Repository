@@ -71,8 +71,9 @@ fields are rejected.
 ## What it provides
 
 - Reusable `ReadQuery` settings; `withLocale()`, `with()` and `withVisibility()`
-  return new queries. Projection reads use `rows()` without hydrating models;
-  `count()`, `sum()`, `min()`, `max()` and `avg()` share the same criteria.
+  return new queries. Projection reads use `rows()` without hydrating models,
+  and a mapping read only that way needs no hydrator; `count()`, `sum()`,
+  `min()`, `max()` and `avg()` share the same criteria.
 - `Filter::all/any/not/related`, with related predicates compiled as `EXISTS`.
 - Field-by-field translation fallback shared by reads, filters, and sorting;
   explicit translation PATCH upserts through `translations()->save()` and

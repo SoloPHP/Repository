@@ -85,7 +85,7 @@ final readonly class RowMapper
     public function hydrate(array $row): object
     {
         /** @var mixed $entity */
-        $entity = ($this->mapping->hydrate)($row);
+        $entity = ($this->mapping->hydrate ?? $this->mapping->requireHydrator('Reading entities'))($row);
 
         if (!is_object($entity)) {
             throw new UnexpectedValueException('The mapping hydrator must return an object.');

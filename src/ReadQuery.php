@@ -103,6 +103,7 @@ final readonly class ReadQuery
         ?int $limit = null,
         int $offset = 0,
     ): array {
+        $this->mapping->requireHydrator('Reading entities');
         $query = $this->executor->selectAll($criteria, $orderBy, $limit, $offset);
         if ($this->loads->nodes === []) {
             return $limit === 0 ? [] : $this->executor->entities($query);
@@ -206,7 +207,9 @@ final readonly class ReadQuery
      * express. It selects nothing: add the SELECT and any joins, grouping or order, naming this
      * table by the alias. Add conditions with andWhere(), never where(): where() replaces the
      * whole WHERE clause and silently drops the criteria and the soft-delete condition. Values
-     * are bound as named parameters, so bind further values with createNamedParameter(). Its rows
+     * are bound as named parameters, so bind further values with createNamedParameter(). An IN
+     * list is one ArrayParameterType parameter that DBAL expands when it runs the statement, so
+     * run the builder itself or pass getParameterTypes() along with getParameters(). Its rows
      * are not converted through the mapping.
      *
      * @param string $alias A lowercase SQL identifier, so that unquoted references match it on every platform.
@@ -238,6 +241,7 @@ final readonly class ReadQuery
         if ($batchSize < 1) {
             throw new InvalidArgumentException('Batch size must be greater than zero.');
         }
+        $this->mapping->requireHydrator('Reading entities');
         $key = $this->mapping->primaryKey;
         if ($key === null || $this->executor->mapper()->keyType() !== KeyType::Integer) {
             throw new InvalidArgumentException('Keyset iteration requires an integer primary key.');
@@ -245,7 +249,7 @@ final readonly class ReadQuery
 
         $query = $this->executor->selectAll($criteria, [$key => 'ASC'], $batchSize);
         // Later batches bind one more parameter: the key to continue after.
-        $this->db->assertParameters(count($query->getParameters()) + 1);
+        $this->db->assertParameters(Database::boundCount($query) + 1);
 
         $loader = new RelationLoader($this->db);
         $loads = $loader->prepare($this->mapping, $this->loads, $this->executor->locale());
