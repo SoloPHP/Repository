@@ -1,33 +1,22 @@
 # Solo Repository
 
-Typed PHP repositories with consistent translation fallback and batch-loaded relations.
+[![Latest Version on Packagist](https://img.shields.io/packagist/v/solophp/repository.svg)](https://packagist.org/packages/solophp/repository)
+[![PHP Version](https://img.shields.io/badge/PHP-8.3%2B-8892BF.svg)](https://php.net/)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-Map tables to your own objects, reuse query settings, and write data explicitly.
+Typed PHP repositories on Doctrine DBAL. Map a table to your own objects, read through reusable queries, write explicitly, and get translations with one fallback rule and relations loaded in batches.
 
-## Requirements and installation
+## Installation
 
-- PHP **8.3+** and Doctrine DBAL **^4.3**.
-- A PDO driver for your database: `pdo_mysql` (MySQL and MariaDB), `pdo_pgsql`, or `pdo_sqlite`.
-- Tested server versions: **MySQL 8.4**, **MariaDB 12.3** and **PostgreSQL 17**, plus SQLite.
-  Other DBAL platforms are not automatically supported.
-
-Install from the GitHub repository:
-
-```sh
-composer config repositories.solophp-repository vcs https://github.com/SoloPHP/Repository.git
-composer require 'solophp/repository:dev-main'
+```bash
+composer require solophp/repository
 ```
 
-## Quick start
+Requires PHP 8.3+, Doctrine DBAL ^4.3 and the PDO driver of your database. Tested on MySQL 8.4, MariaDB 12.3, PostgreSQL 17 and SQLite.
 
-The application owns its database schema. This SQLite example creates one in
-memory so you can run it after installing the package:
+## Example
 
 ```php
-<?php
-
-require 'vendor/autoload.php';
-
 use Doctrine\DBAL\DriverManager;
 use Doctrine\DBAL\Types\Types;
 use Solo\Repository\Mapping;
@@ -48,77 +37,30 @@ $products = new Repository($db, new Mapping(
 ));
 
 $id = $products->insertGetId(['sku' => 'CHAIR', 'price' => '49.90']);
-$products->update($id, ['price' => '59.90']); // Affected rows; no hidden model read.
+$products->update($id, ['price' => '59.90']);
 
-$query = $products->read();
-$product = $query->find($id);              // stdClass|null
-$page = $query->findBy(
-    criteria: ['price >=' => '50.00'],
-    orderBy: ['price' => 'ASC', 'id' => 'ASC'],
-    limit: 20,
-    offset: 0,
-);
-
-foreach ($query->iterateById(batchSize: 100) as $product) {
-    echo $product->sku . PHP_EOL;
-}
+$product = $products->read()->find($id);
+$page = $products->read()->findBy(['price >=' => '50.00'], ['price' => 'ASC', 'id' => 'ASC'], limit: 20);
 ```
 
-`hydrate` receives DBAL-converted values and can construct your own immutable
-model instead. `Mapping` defines every readable and writable field; unknown
-fields are rejected.
-
-## What it provides
-
-- Reusable `ReadQuery` settings; `withLocale()`, `with()` and `withVisibility()`
-  return new queries. Projection reads use `rows()` without hydrating models,
-  and a mapping read only that way needs no hydrator; `count()`, `sum()`,
-  `min()`, `max()` and `avg()` share the same criteria.
-- `Filter::all/any/not/related`, with related predicates compiled as `EXISTS`.
-- Field-by-field translation fallback shared by reads, filters, and sorting;
-  explicit translation PATCH upserts through `translations()->save()` and
-  insert-missing seeding through `translations()->seed()`.
-- `BelongsTo`, `HasOne`, `HasMany`, and `BelongsToMany` in the **`Relations`**
-  namespace, including nested batch loading, default collection order, and
-  inherited locale/fallback.
-- Ordering by fields of `BelongsTo` targets, such as `category.name`.
-- Soft delete with explicit visibility, bounded ID iteration, atomic bulk
-  inserts, native upserts by a unique key, `lockForUpdate()` row locks and
-  locking reads through `forUpdate()`, and `links()->attach/detach/sync()` for
-  physical pivot writes.
-
-Schema migrations, multi-table reports, advisory locks, transaction boundaries
-across repositories, and cache invalidation belong to the application and DBAL.
-There is no identity map, lazy loading, automatic cascade save, or change tracking.
+`hydrate` receives values already converted by their DBAL types and may build an immutable model of your own. The columns of the mapping are the only fields a read or a write accepts.
 
 ## Documentation
 
-- [Getting started](docs/guide/index.md)
-- [Public API and contracts](docs/guide/api.md)
-- [Migration from Base Repository v3](docs/guide/migration.md)
-- [Detailed behavior and database tests](docs/guide/details.md)
-- [Runnable catalog with translations and relations](examples/relations.php)
-- [Changelog](CHANGELOG.md) and [release verification](RELEASING.md)
-- [Base Repository v3 documentation](https://github.com/SoloPHP/Base-Repository/tree/v3.1.0/docs)
+**[Full Documentation](https://solophp.github.io/Repository/)**
 
-## Development
-
-```sh
-git clone https://github.com/SoloPHP/Repository.git
-cd Repository
-composer install
-composer test
-php examples/crud.php
-php examples/translations.php
-php examples/relations.php
-php examples/migration.php
-```
-
-`composer test:database` runs the separate MySQL/MariaDB/PostgreSQL suite and requires
-`REPOSITORY_DATABASE_URL`. See the [Docker and CI instructions](docs/guide/details.md#проверка-на-mysql-mariadb-и-postgresql).
-CI covers PHP 8.3 with the minimum DBAL 4.3 branch and PHP 8.3/8.5 with the latest
-compatible DBAL release.
+- [Getting Started](https://solophp.github.io/Repository/guide/)
+- [Typed Repositories](https://solophp.github.io/Repository/guide/api#typed-repositories)
+- [Mapping and Types](https://solophp.github.io/Repository/guide/api#mapping-and-types)
+- [Read Queries](https://solophp.github.io/Repository/guide/api#repository-and-read-queries)
+- [Criteria and Filter](https://solophp.github.io/Repository/guide/api#criteria-and-filter)
+- [Translations](https://solophp.github.io/Repository/guide/api#translation-metadata-and-locale)
+- [Relations](https://solophp.github.io/Repository/guide/api#relations-and-load)
+- [Writes](https://solophp.github.io/Repository/guide/api#repository-writes)
+- [Transactions and DBAL](https://solophp.github.io/Repository/guide/api#transactions-and-the-dbal-escape-hatch)
+- [Behavior in Detail](https://solophp.github.io/Repository/guide/details)
+- [Changelog](CHANGELOG.md)
 
 ## License
 
-[MIT](LICENSE).
+MIT. See [LICENSE](LICENSE).

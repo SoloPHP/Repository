@@ -7,12 +7,6 @@ on:
     branches: [main]
     paths: ['docs/**', '.github/workflows/docs.yml']
   workflow_dispatch:
-    inputs:
-      deploy:
-        description: Publish documentation to GitHub Pages
-        type: boolean
-        default: false
-        required: false
 
 permissions:
   contents: read
@@ -34,12 +28,12 @@ jobs:
       - run: npm run build
         working-directory: docs
       - uses: actions/upload-pages-artifact@v3
-        if: github.event_name == 'workflow_dispatch' && inputs.deploy == true && github.ref == 'refs/heads/main' && github.repository == 'SoloPHP/Repository'
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && github.repository == 'SoloPHP/Repository'
         with:
           path: docs/.vitepress/dist
 
   deploy:
-    if: github.event_name == 'workflow_dispatch' && inputs.deploy == true && github.ref == 'refs/heads/main' && github.repository == 'SoloPHP/Repository'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && github.repository == 'SoloPHP/Repository'
     needs: build
     runs-on: ubuntu-latest
     permissions:

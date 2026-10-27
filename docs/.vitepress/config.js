@@ -21,8 +21,8 @@ export default defineConfig({
     nav: [
       { text: 'Guide', link: '/guide/' },
       { text: 'API', link: '/guide/api' },
-      { text: 'Migration', link: '/guide/migration' },
-      { text: 'Details (RU)', link: '/guide/details' },
+      { text: 'Details', link: '/guide/details' },
+      { text: 'v1.0.0', link: 'https://github.com/SoloPHP/Repository/releases' },
     ],
 
     sidebar: [
@@ -31,8 +31,7 @@ export default defineConfig({
         items: [
           { text: 'Getting started', link: '/guide/' },
           { text: 'API reference', link: '/guide/api' },
-          { text: 'Migration from Base Repository v3', link: '/guide/migration' },
-          { text: 'Detailed guide (Russian)', link: '/guide/details' },
+          { text: 'Behavior in detail', link: '/guide/details' },
         ],
       },
     ],
@@ -43,7 +42,7 @@ export default defineConfig({
 
     footer: {
       message: 'MIT licensed.',
-      copyright: `Copyright © 2025-${new Date().getFullYear()} SoloPHP`,
+      copyright: 'Copyright © 2026 SoloPHP',
     },
 
     editLink: {

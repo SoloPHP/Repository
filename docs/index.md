@@ -15,9 +15,6 @@ hero:
     - theme: alt
       text: API reference
       link: /guide/api
-    - theme: alt
-      text: Migrate from Base Repository
-      link: /guide/migration
 
 features:
   - icon: 🧩
@@ -94,11 +91,8 @@ translations, relations, visibility, and transaction contracts.
 PHP **8.3+**, Doctrine DBAL **^4.3**, and the matching PDO driver are required.
 The integration matrix covers SQLite, MySQL 8.4, MariaDB 12.3, and PostgreSQL 17.
 
-Install from the GitHub repository:
-
 ```sh
-composer config repositories.solophp-repository vcs https://github.com/SoloPHP/Repository.git
-composer require 'solophp/repository:dev-main'
+composer require solophp/repository
 ```
 
 Continue with the [getting-started guide](./guide/index.md).

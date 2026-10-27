@@ -34,7 +34,6 @@ jobs:
       - run: php examples/crud.php
       - run: php examples/translations.php
       - run: php examples/relations.php
-      - run: php examples/migration.php
 
   database:
     name: ${{ matrix.database.engine }} / PHP ${{ matrix.runtime.php }} / DBAL ${{ matrix.runtime.dbal }}
