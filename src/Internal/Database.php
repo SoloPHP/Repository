@@ -8,7 +8,7 @@ use Doctrine\DBAL\ArrayParameterType;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\ParameterType;
 use Doctrine\DBAL\Platforms\AbstractPlatform;
-use Doctrine\DBAL\Platforms\MySQL80Platform;
+use Doctrine\DBAL\Platforms\MySQLPlatform;
 use Doctrine\DBAL\Query\QueryBuilder;
 use Doctrine\DBAL\Result;
 use Doctrine\DBAL\Types\Type;
@@ -139,7 +139,7 @@ final class Database
         if ($dialect === Dialect::SQLite) {
             return $query->executeQuery();
         }
-        if ($alias !== null && ($dialect === Dialect::PostgreSQL || $this->platform() instanceof MySQL80Platform)) {
+        if ($alias !== null && ($dialect === Dialect::PostgreSQL || $this->mysqlLocksOneTable())) {
             return $this->connection->executeQuery(
                 $query->getSQL() . ' FOR UPDATE OF ' . $this->quote($alias),
                 $query->getParameters(),
@@ -148,6 +148,18 @@ final class Database
         }
 
         return (clone $query)->forUpdate()->executeQuery();
+    }
+
+    /**
+     * Whether the server is a MySQL that takes FOR UPDATE OF, as MySQL does from 8.0.1. Its
+     * version tells, not DBAL's MySQL 8 platform classes: DBAL deprecates them and drops them
+     * with MySQL 5.7, after which MySQLPlatform itself stands for MySQL 8. MariaDB, whose
+     * platform is not a MySQLPlatform, has no OF.
+     */
+    private function mysqlLocksOneTable(): bool
+    {
+        return $this->platform() instanceof MySQLPlatform
+            && version_compare($this->connection->getServerVersion(), '8.0.1', '>=');
     }
 
     public function assertParameters(int $count): void

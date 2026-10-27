@@ -459,9 +459,9 @@ $db->transactional(function () use ($products, $id): void {
 });
 ```
 
-All repositories and write services must share that connection. CRUD uses the current transaction without adding one. `insertMany` split into several statements and nonempty LinkSet operations use DBAL transactions/nested savepoints; translation save is a single native upsert that participates in the caller's transaction. Database errors, including FK and unique violations, propagate. Catch exceptions outside the transaction boundary when the entire workflow must roll back.
+All repositories and write services must share that connection. CRUD uses the current transaction without adding one. `insertMany` split into several statements and nonempty LinkSet operations use DBAL transactions/nested savepoints; translation save is a single native upsert that participates in the caller's transaction. Database errors, including FK and unique violations, propagate; the one exception is a LinkSet pair that another writer stored after the operation read the set, which the INSERT skips. Catch exceptions outside the transaction boundary when the entire workflow must roll back.
 
-Atomic rollback does not serialize concurrent sync/attach calls or provide automatic retries. If concurrent writers must agree on a final tag set, apply the application's locking/versioning policy in the transaction. Physical string-key operations may read canonical IDs to respect database collation; do not assume that LinkSet is a write-only operation. Missing/orphan targets are not an orphan-cleanup feature; enforce the required FKs.
+Atomic rollback does not serialize concurrent sync/attach calls or provide automatic retries. Concurrent attaches of one pair no longer fail on the pivot key on MySQL and on PostgreSQL in READ COMMITTED, but MariaDB with snapshot isolation and PostgreSQL above READ COMMITTED refuse a transaction whose snapshot is older than the other writer's commit. If concurrent writers must agree on a final tag set, apply the application's locking/versioning policy in the transaction. Physical string-key operations may read canonical IDs to respect database collation; do not assume that LinkSet is a write-only operation. Missing/orphan targets are not an orphan-cleanup feature; enforce the required FKs.
 
 ## 10. Replace repository wrappers with application code and DBAL
 

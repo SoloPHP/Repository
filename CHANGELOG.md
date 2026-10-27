@@ -9,7 +9,8 @@ Initial release of **Solo Repository** (`solophp/repository`) with the
 
 - Explicit, typed `Mapping` and `Repository`; constructing repositories and
   queries never opens a database connection. An application can extend
-  `Repository` into a typed repository per table; its public methods are final.
+  `Repository` into a typed repository per table; its public methods are final,
+  and minor releases may add new ones.
 - Reusable `ReadQuery` with projection reads, `sum`/`min`/`max`/`avg` aggregates
   over the same criteria as `count`, bounded integer-ID iteration, and
   `queryBuilder()`, a DBAL `QueryBuilder` over the rows its criteria select.
@@ -36,6 +37,32 @@ Initial release of **Solo Repository** (`solophp/repository`) with the
   reads, native upserts by a unique key, atomic `insertMany`, and many-to-many
   `LinkSet` operations.
 - SQLite tests, MySQL 8.4/MariaDB 12.3/PostgreSQL 17 integration tests, and a PHP/DBAL CI matrix.
+
+### Changes since 1.0.0-RC5
+
+- The compatibility rules for subclasses of `Repository` are documented.
+  Throughout 1.x it stays a non-final `readonly` class whose public methods,
+  except the constructor, are final and whose state is private. A minor release
+  may add public methods, and a subclass that declares a method of the same
+  name then fails to load. Constructor parameters keep their names and order;
+  a parameter added in a minor release is optional and comes last.
+- **Behavior change:** `LinkSet::attach()` and `sync()` skip a pair that
+  another writer stored after the operation read the set, instead of failing
+  on the pivot's unique key. Their INSERT carries `ON CONFLICT (pair) DO NOTHING`
+  on PostgreSQL and SQLite and `ON DUPLICATE KEY UPDATE` on MySQL and MariaDB;
+  foreign-key violations still propagate. Concurrent attaches of one pair now
+  both succeed on MySQL and on PostgreSQL in READ COMMITTED. MariaDB with
+  snapshot isolation (error 1020) and PostgreSQL in REPEATABLE READ or
+  SERIALIZABLE (a serialization failure) still refuse a transaction whose
+  snapshot is older than the other writer's commit, and an exact final set
+  still needs an owner lock. On PostgreSQL and SQLite these writes now fail on a
+  pivot without the UNIQUE pair that the guide already required.
+- A locking read on MySQL tells `FOR UPDATE OF` support by the server version,
+  8.0.1 or later, instead of by DBAL's `MySQL80Platform`. DBAL deprecates its
+  MySQL 8 platform classes and drops them with MySQL 5.7 support, after which
+  `MySQLPlatform` itself stands for MySQL 8; the lock keeps covering only the
+  read's table there. MySQL 5.7 and MariaDB keep the plain `FOR UPDATE`. The
+  package no longer refers to a deprecated DBAL platform class.
 
 ### Changes since 1.0.0-RC4
 
