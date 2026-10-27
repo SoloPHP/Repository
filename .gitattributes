@@ -8,10 +8,8 @@
 /phpunit.database.xml export-ignore
 /phpstan.neon export-ignore
 /compose.database.yml export-ignore
-/RELEASING.md export-ignore
 /vendor export-ignore
 /composer.lock export-ignore
-/experiments export-ignore
 /.idea export-ignore
 /.vscode export-ignore
 /.phpunit.cache export-ignore

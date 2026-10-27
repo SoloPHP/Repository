@@ -10,11 +10,8 @@ Models can be mutable or immutable.
 PHP 8.3+, Doctrine DBAL ^4.3, and the matching PDO driver are required. The test
 matrix covers SQLite, MySQL 8.4, MariaDB 12.3, and PostgreSQL 17.
 
-Install from the GitHub repository:
-
 ```sh
-composer config repositories.solophp-repository vcs https://github.com/SoloPHP/Repository.git
-composer require 'solophp/repository:dev-main'
+composer require solophp/repository
 ```
 
 ## Map an existing table
@@ -107,6 +104,4 @@ relation types, visibility, and transaction behavior. In the source checkout,
 ## Further reading
 
 - [Public API and constraints](api.md)
-- [Migration from Base Repository v3](migration.md)
-- [Detailed behavior and database test commands (Russian)](details.md)
-- [Base Repository v3 documentation](https://github.com/SoloPHP/Base-Repository/tree/v3.1.0/docs)
+- [Behavior in detail and database tests](details.md)
