@@ -9,7 +9,8 @@ Initial release of **Solo Repository** (`solophp/repository`) with the
 
 - Explicit, typed `Mapping` and `Repository`; constructing repositories and
   queries never opens a database connection. An application can extend
-  `Repository` into a typed repository per table; its public methods are final.
+  `Repository` into a typed repository per table; its public methods are final,
+  and minor releases may add new ones.
 - Reusable `ReadQuery` with projection reads, `sum`/`min`/`max`/`avg` aggregates
   over the same criteria as `count`, bounded integer-ID iteration, and
   `queryBuilder()`, a DBAL `QueryBuilder` over the rows its criteria select.
@@ -36,6 +37,15 @@ Initial release of **Solo Repository** (`solophp/repository`) with the
   reads, native upserts by a unique key, atomic `insertMany`, and many-to-many
   `LinkSet` operations.
 - SQLite tests, MySQL 8.4/MariaDB 12.3/PostgreSQL 17 integration tests, and a PHP/DBAL CI matrix.
+
+### Changes since 1.0.0-RC5
+
+- The compatibility rules for subclasses of `Repository` are documented.
+  Throughout 1.x it stays a non-final `readonly` class whose public methods,
+  except the constructor, are final and whose state is private. A minor release
+  may add public methods, and a subclass that declares a method of the same
+  name then fails to load. Constructor parameters keep their names and order;
+  a parameter added in a minor release is optional and comes last.
 
 ### Changes since 1.0.0-RC4
 

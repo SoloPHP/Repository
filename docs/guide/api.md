@@ -4,7 +4,7 @@ This reference describes Solo Repository 1.0: PHP 8.3+, Doctrine DBAL `^4.3`, an
 
 `Repository<T>`, `Mapping<T>` and `ReadQuery<T>` use PHPDoc generics, where `T` is an object. `T` is covariant, so `Repository<Product>` is accepted where `Repository<object>` is expected. Relation definitions are generic over their owner and target models, so static analysis checks every `assign` callback against the target mapping. The runtime checks that hydration and relation assignment return objects; it does not enforce their concrete class. `Mapping`, `ReadQuery`, the configuration objects and the write helpers are `final readonly`; `Repository` is `readonly` and may be extended into a [typed repository](#typed-repositories). Readonly configuration does not make the shared DBAL connection, returned models or objects captured by callbacks immutable.
 
-The public API consists of the types and methods documented below. The `Internal` namespace and members marked `@internal` are implementation details without a semantic-versioning compatibility promise: the constructors of `ReadQuery`, `LinkSet` and `TranslationStore` (obtain them from a `Repository`), the properties of `Filter`, and `Relations\Relation::resolve()`. The abstract `Relation` base is not an extension point: use the four supplied final definitions. The legacy `BaseRepository`, `RepositoryInterface` and singular `Relation` namespace belong to the separate `solophp/base-repository` package; see the [migration guide](migration.md).
+The public API consists of the types and methods documented below. The `Internal` namespace and members marked `@internal` are implementation details without a semantic-versioning compatibility promise: the constructors of `ReadQuery`, `LinkSet` and `TranslationStore` (obtain them from a `Repository`), the properties of `Filter`, and `Relations\Relation::resolve()`. The abstract `Relation` base is not an extension point: use the four supplied final definitions. `Repository` may be extended under the compatibility rules of [typed repositories](#typed-repositories). The legacy `BaseRepository`, `RepositoryInterface` and singular `Relation` namespace belong to the separate `solophp/base-repository` package; see the [migration guide](migration.md).
 
 ## A minimal repository
 
@@ -80,6 +80,12 @@ $product = (new ProductRepository($db))->read()->find($id); // Product|null
 ```
 
 A `readonly` class can only be extended by a `readonly` class. A static `mapping()` also gives relations a target factory: `target: ProductRepository::mapping(...)`.
+
+Subclasses can rely on these rules throughout 1.x:
+
+- `Repository` stays a non-final `readonly` class. Its public methods, except the constructor, stay final, and its state stays private, so a subclass depends only on the public API.
+- A minor release may add public methods to `Repository`. PHP refuses to load a subclass that declares a method of the same name, so name a subclass's methods after its table's domain, such as `cheaperThan()`, and read the changelog before upgrading.
+- The constructor keeps the names, order and meaning of its parameters. A parameter added in a minor release is optional and comes last.
 
 ## Mapping and types
 
