@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Solo\Repository\Tests\Core;
 
-use ArrayObject;
 use DateTimeImmutable;
 use Doctrine\DBAL\ArrayParameterType;
 use Doctrine\DBAL\Configuration;
@@ -24,11 +23,14 @@ use Psr\Log\AbstractLogger;
 use Solo\Repository\Filter;
 use Solo\Repository\Mapping;
 use Solo\Repository\Repository;
+use Solo\Repository\Tests\Fixtures\RecordsStatements;
 use Solo\Repository\Visibility;
 use Stringable;
 
 final class RepositoryTest extends TestCase
 {
+    use RecordsStatements;
+
     private Connection $db;
     private Repository $repository;
     private AbstractLogger $log;
@@ -363,6 +365,20 @@ final class RepositoryTest extends TestCase
         ], $this->repository->read()->rows(['sku', 'active'], orderBy: ['id' => 'ASC']));
     }
 
+    public function testInsertManyRunsABatchThatFitsOneStatementWithoutATransaction(): void
+    {
+        $connection = $this->createMock(Connection::class);
+        $connection->method('getDatabasePlatform')->willReturn(new PostgreSQLPlatform());
+        $connection->expects(self::never())->method('transactional');
+        $connection->expects(self::once())->method('executeStatement')->with(
+            'INSERT INTO "items" ("sku") VALUES (?), (?)',
+            ['a', 'b'],
+            [Types::STRING, Types::STRING],
+        )->willReturn(2);
+
+        self::assertSame(2, (new Repository($connection, $this->mapping()))->insertMany([['sku' => 'a'], ['sku' => 'b']]));
+    }
+
     public function testInsertManyCapsBoundParameters(): void
     {
         $rows = [];
@@ -527,7 +543,7 @@ final class RepositoryTest extends TestCase
 
     public function testLockForUpdateUsesTheServerRowLockAndSplitsSortedKeySets(): void
     {
-        [$connection, $statements] = $this->lockingConnection();
+        [$connection, $statements] = $this->recordingConnection(new PostgreSQLPlatform());
 
         // Sorting before the split keeps one key order across statements.
         (new Repository($connection, $this->mapping(), parameterLimit: 2))->lockForUpdate([3, 1, 2]);
@@ -542,33 +558,12 @@ final class RepositoryTest extends TestCase
 
     public function testLockForUpdateCapsKeysPerStatementBelowThePlatformBudget(): void
     {
-        [$connection, $statements] = $this->lockingConnection();
+        [$connection, $statements] = $this->recordingConnection(new PostgreSQLPlatform());
 
         // A longer IN list can make MySQL scan, and lock, the whole table.
         (new Repository($connection, $this->mapping()))->lockForUpdate(range(5001, 1, -1));
 
         self::assertSame([[range(1, 5000)], [[5001]]], array_column($statements->getArrayCopy(), 1));
-    }
-
-    /** @return array{Connection, ArrayObject<int, array{string, list<mixed>, list<mixed>}>} */
-    private function lockingConnection(): array
-    {
-        $statements = new ArrayObject();
-        $result = $this->createStub(Result::class);
-        $connection = $this->createStub(Connection::class);
-        $connection->method('getDatabasePlatform')->willReturn(new PostgreSQLPlatform());
-        $connection->method('isTransactionActive')->willReturn(true);
-        $connection->method('createQueryBuilder')->willReturnCallback(
-            static fn() => new \Doctrine\DBAL\Query\QueryBuilder($connection),
-        );
-        $connection->method('executeQuery')->willReturnCallback(
-            static function (string $query, array $parameters, array $types) use ($statements, $result): Result {
-                $statements[] = [$query, array_values($parameters), array_values($types)];
-                return $result;
-            },
-        );
-
-        return [$connection, $statements];
     }
 
     public function testPurgeByDeletesPhysicallyRegardlessOfVisibility(): void

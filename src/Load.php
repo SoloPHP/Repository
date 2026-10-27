@@ -23,12 +23,8 @@ final readonly class Load
         array $orderBy = [],
         public Visibility $visibility = Visibility::Active,
     ) {
-        foreach (explode('.', $name) as $segment) {
-            if (!Identifier::isValid($segment)) {
-                throw new InvalidArgumentException(
-                    'A load name must be a relation name or a dotted relation path.',
-                );
-            }
+        if (!Identifier::isPath($name)) {
+            throw new InvalidArgumentException('A load name must be a relation name or a dotted relation path.');
         }
 
         $this->orderBy = OrderBy::normalize($orderBy);

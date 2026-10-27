@@ -8,6 +8,7 @@ use Doctrine\DBAL\Query\QueryBuilder;
 use Doctrine\DBAL\Types\Types;
 use Generator;
 use InvalidArgumentException;
+use LogicException;
 use Solo\Repository\Internal\Database;
 use Solo\Repository\Internal\FieldResolver;
 use Solo\Repository\Internal\KeyType;
@@ -51,20 +52,21 @@ final readonly class ReadQuery
         private Visibility $visibility,
         private ?Locale $locale,
         private LoadPlan $loads,
+        private bool $locked = false,
     ) {
-        $this->executor = new ReadExecutor($db, $mapping, $visibility, $locale);
+        $this->executor = new ReadExecutor($db, $mapping, $visibility, $locale, $locked, $loads);
     }
 
     /** @return self<T> */
     public function withVisibility(Visibility $visibility): self
     {
-        return new self($this->db, $this->mapping, $visibility, $this->locale, $this->loads);
+        return $this->copy(visibility: $visibility);
     }
 
     /** @return self<T> */
     public function withLocale(string $locale, ?string $fallback = null): self
     {
-        return new self($this->db, $this->mapping, $this->visibility, new Locale($locale, $fallback), $this->loads);
+        return $this->copy(locale: new Locale($locale, $fallback));
     }
 
     /**
@@ -73,7 +75,25 @@ final readonly class ReadQuery
      */
     public function with(array $relations): self
     {
-        return new self($this->db, $this->mapping, $this->visibility, $this->locale, LoadPlan::from($relations));
+        return $this->copy(loads: LoadPlan::from($relations));
+    }
+
+    /**
+     * The same read as a locking one: find(), findOneBy(), findBy(), rows(), exists() and
+     * iterateById() run SELECT ... FOR UPDATE and lock the rows they read until the surrounding
+     * transaction ends; outside a transaction they throw LogicException. A locking read never
+     * answers from the snapshot of a REPEATABLE READ transaction: MySQL reads the latest
+     * committed rows, while PostgreSQL, and MariaDB with innodb_snapshot_isolation (its default
+     * since 11.6), reject a row changed since the snapshot as a serialization failure. The lock
+     * covers the rows of this table (MariaDB, which has no FOR UPDATE OF, also locks the rows
+     * the statement joins); relation loads read without locks. Aggregates and queryBuilder()
+     * throw LogicException. SQLite has no row locks and runs the plain SELECT.
+     *
+     * @return self<T>
+     */
+    public function forUpdate(): self
+    {
+        return $this->copy(locked: true);
     }
 
     /** @return T|null */
@@ -84,7 +104,7 @@ final readonly class ReadQuery
 
     /**
      * @param array<string, mixed>|Filter $criteria
-     * @param array<string, string> $orderBy
+     * @param array<string, string> $orderBy Fields, or relation paths to fields of BelongsTo targets.
      * @return T|null
      */
     public function findOneBy(array|Filter $criteria, array $orderBy = []): ?object
@@ -94,7 +114,7 @@ final readonly class ReadQuery
 
     /**
      * @param array<string, mixed>|Filter $criteria
-     * @param array<string, string> $orderBy
+     * @param array<string, string> $orderBy Fields, or relation paths to fields of BelongsTo targets.
      * @return list<T>
      */
     public function findBy(
@@ -130,6 +150,8 @@ final readonly class ReadQuery
     /** @param array<string, mixed>|Filter $criteria */
     public function count(array|Filter $criteria = []): int
     {
+        $this->assertUnlocked('Aggregates');
+
         return (int) self::number($this->executor->scalar(static fn(): string => 'COUNT(*)', $criteria), 'COUNT(*)');
     }
 
@@ -181,7 +203,7 @@ final readonly class ReadQuery
     /**
      * @param list<string> $columns
      * @param array<string, mixed>|Filter $criteria
-     * @param array<string, string> $orderBy
+     * @param array<string, string> $orderBy Fields, or relation paths to fields of BelongsTo targets.
      * @return list<array<string, mixed>>
      */
     public function rows(
@@ -217,6 +239,7 @@ final readonly class ReadQuery
      */
     public function queryBuilder(string $alias, array|Filter $criteria = []): QueryBuilder
     {
+        $this->assertUnlocked('Query builders');
         if ($this->loads->nodes !== []) {
             throw new InvalidArgumentException('Query builders cannot load relations; use with([]) for SQL.');
         }
@@ -303,10 +326,40 @@ final readonly class ReadQuery
      */
     private function aggregate(string $function, string $field, array|Filter $criteria): mixed
     {
+        $this->assertUnlocked('Aggregates');
+
         return $this->executor->scalar(
             static fn(FieldResolver $fields): string => $function . '(' . $fields->expression($field) . ')',
             $criteria,
         );
+    }
+
+    /**
+     * The same read with the given settings replaced; a lock, once asked for, is kept.
+     *
+     * @return self<T>
+     */
+    private function copy(
+        ?Visibility $visibility = null,
+        ?Locale $locale = null,
+        ?LoadPlan $loads = null,
+        bool $locked = false,
+    ): self {
+        return new self(
+            $this->db,
+            $this->mapping,
+            $visibility ?? $this->visibility,
+            $locale ?? $this->locale,
+            $loads ?? $this->loads,
+            $locked || $this->locked,
+        );
+    }
+
+    private function assertUnlocked(string $operation): void
+    {
+        if ($this->locked) {
+            throw new LogicException($operation . ' do not lock rows; lock them with a locking findBy() or rows().');
+        }
     }
 
     private function assertNumeric(string $field): void

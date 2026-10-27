@@ -6,8 +6,13 @@ namespace Solo\Repository\Tests\Database;
 
 use DateTimeImmutable;
 use DateTimeZone;
+use Doctrine\DBAL\Exception\DeadlockException;
+use Doctrine\DBAL\Exception\DriverException;
 use Doctrine\DBAL\Exception\UniqueConstraintViolationException;
+use Doctrine\DBAL\Platforms\MariaDBPlatform;
+use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
 use Doctrine\DBAL\Schema\Schema;
+use Doctrine\DBAL\TransactionIsolationLevel;
 use Doctrine\DBAL\Types\Types;
 use Solo\Repository\Mapping;
 use Solo\Repository\Repository;
@@ -207,20 +212,108 @@ final class RepositoryDatabaseTest extends DatabaseTestCase
     {
         $id = $this->repository->insertGetId(['sku' => 'locked']);
         $other = $this->otherConnection();
-        $probe = 'SELECT id FROM repo_repository_items WHERE id = ? FOR UPDATE NOWAIT';
+        $probe = 'SELECT id FROM repo_repository_items WHERE id = ?';
 
         $this->connection->beginTransaction();
-        $this->repository->lockForUpdate([$id, (string) $id]);
         try {
-            $other->fetchOne($probe, [$id]);
-            self::fail('A second session must not lock a row held by the first.');
-        } catch (\Doctrine\DBAL\Exception) {
-            self::assertTrue($this->connection->isTransactionActive());
+            $this->repository->lockForUpdate([$id, (string) $id]);
+            self::assertTrue(self::isLocked($other, $probe, [$id]));
         } finally {
             $this->connection->rollBack();
         }
 
-        self::assertSame($id, (int) $other->fetchOne($probe, [$id]));
+        self::assertFalse(self::isLocked($other, $probe, [$id]));
+    }
+
+    public function testLockingReadHoldsTheRowsItReadsUntilTheTransactionEnds(): void
+    {
+        $ids = [
+            $this->repository->insertGetId(['sku' => 'read']),
+            $this->repository->insertGetId(['sku' => 'existing']),
+            $this->repository->insertGetId(['sku' => 'untouched']),
+        ];
+        $other = $this->otherConnection();
+        $probe = 'SELECT id FROM repo_repository_items WHERE id = ?';
+
+        $this->connection->beginTransaction();
+        try {
+            $read = $this->repository->read()->forUpdate();
+            self::assertSame('read', $read->find($ids[0])->sku);
+            self::assertTrue($read->exists(['sku' => 'existing']));
+            self::assertTrue(self::isLocked($other, $probe, [$ids[0]]));
+            self::assertTrue(self::isLocked($other, $probe, [$ids[1]]));
+            self::assertFalse(self::isLocked($other, $probe, [$ids[2]]));
+            self::assertStringContainsString('FOR UPDATE', $this->log->selects()[0]['sql']);
+        } finally {
+            $this->connection->rollBack();
+        }
+
+        self::assertFalse(self::isLocked($other, $probe, [$ids[0]]));
+    }
+
+    public function testLockingReadNeverAnswersWithTheSnapshotOfAPlainRead(): void
+    {
+        $id = $this->repository->insertGetId(['sku' => 'snapshot', 'amount' => '1.00']);
+        $other = $this->otherConnection();
+        $platform = $this->connection->getDatabasePlatform();
+        // PostgreSQL, and MariaDB with snapshot isolation (its default since 11.6), refuse to lock
+        // a row changed since the snapshot; MySQL reads the committed row.
+        $postgres = $platform instanceof PostgreSQLPlatform;
+        $refuses = $postgres || (
+            $platform instanceof MariaDBPlatform
+            && (int) $this->connection->fetchOne('SELECT @@innodb_snapshot_isolation') === 1
+        );
+
+        $this->connection->setTransactionIsolation(TransactionIsolationLevel::REPEATABLE_READ);
+        $this->connection->beginTransaction();
+        try {
+            // The first plain read takes the snapshot the transaction then reads.
+            self::assertSame('1.00', $this->repository->read()->find($id)->amount);
+            $other->executeStatement('UPDATE repo_repository_items SET amount = ? WHERE id = ?', ['2.00', $id]);
+            self::assertSame('1.00', $this->repository->read()->find($id)->amount);
+
+            try {
+                $locked = $this->repository->read()->forUpdate()->find($id);
+                self::assertFalse($refuses, 'Expected a serialization failure.');
+                self::assertSame('2.00', $locked->amount);
+            } catch (DriverException $exception) {
+                // The transaction has to start over; a READ COMMITTED one reads the new row instead.
+                self::assertTrue($refuses, $exception->getMessage());
+                self::assertTrue($postgres ? $exception instanceof DeadlockException : $exception->getCode() === 1020);
+            }
+        } finally {
+            $this->connection->rollBack();
+        }
+    }
+
+    public function testUpsertInsertsOrUpdatesTheRowOfAUniqueKeyOnTheServer(): void
+    {
+        $repository = new Repository($this->connection, $this->mapping(true));
+
+        $repository->upsert(['sku' => 'setting'], ['amount' => '1.00'], ['active' => true]);
+        $id = $repository->read()->findOneBy(['sku' => 'setting'])->id;
+        $repository->upsert(['sku' => 'setting'], ['amount' => '2.50'], ['active' => false]);
+        $repository->upsert(['sku' => 'setting'], [], ['amount' => '9.00']);
+        $row = $repository->read()->find($id);
+        self::assertSame('2.50', $row->amount);
+        self::assertTrue($row->active);
+        self::assertSame(1, $repository->read()->count());
+
+        // By primary key; a soft-deleted row is still the one holding its key.
+        $repository->upsert(['id' => $id], ['metadata' => ['by' => 'id']]);
+        $repository->delete($id);
+        $repository->upsert(['sku' => 'setting'], ['amount' => '3.00']);
+        self::assertNull($repository->read()->find($id));
+        $deleted = $repository->read()->withVisibility(Visibility::Deleted)->find($id);
+        self::assertSame('3.00', $deleted->amount);
+        self::assertSame(['by' => 'id'], $deleted->metadata);
+
+        $upserts = array_values(array_filter(
+            $this->log->statements(),
+            static fn(string $sql): bool => str_starts_with($sql, 'INSERT'),
+        ));
+        self::assertCount(5, $upserts);
+        self::assertSame(1, $repository->read()->withVisibility(Visibility::All)->count());
     }
 
     public function testAggregatesAreTypedByTheFieldOnTheServer(): void

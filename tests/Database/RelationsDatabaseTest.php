@@ -7,6 +7,7 @@ namespace Solo\Repository\Tests\Database;
 use Closure;
 use Doctrine\DBAL\Exception\ForeignKeyConstraintViolationException;
 use Doctrine\DBAL\Platforms\AbstractMySQLPlatform;
+use Doctrine\DBAL\Platforms\MariaDBPlatform;
 use Doctrine\DBAL\Schema\Schema;
 use Doctrine\DBAL\Types\Types;
 use Solo\Repository\Filter;
@@ -94,6 +95,94 @@ final class RelationsDatabaseTest extends DatabaseTestCase
         self::assertSame('Category EN', $default->relation('category')->value('name'));
         self::assertSame('Parent EN', $default->relation('category')->relation('parent')->value('name'));
         self::assertCount(3, $this->log->selects());
+    }
+
+    public function testOrderPathsSortByBelongsToTargetsInTheLocaleOfTheRead(): void
+    {
+        $this->insertRows('repo_rel_categories', [
+            'id' => Types::INTEGER, 'parent_id' => Types::INTEGER, 'deleted_at' => Types::STRING,
+        ], [[30, 10, null]]);
+        $this->insertRows('repo_rel_category_translations', [
+            'category_id' => Types::INTEGER, 'locale' => Types::STRING, 'name' => Types::STRING,
+        ], [[30, 'uk', 'Alpha UK'], [30, 'en', 'Zulu EN']]);
+        $this->insertRows('repo_rel_items', $this->itemTypes(), [[6, 30, 'SKU-6', null]]);
+        $this->log->reset();
+        $criteria = ['category_id IN' => [10, 30]];
+        $read = $this->items->withLocale('uk', 'en');
+
+        self::assertSame([6, 1, 2], self::ids($read->findBy($criteria, ['category.name' => 'ASC', 'id' => 'ASC'])));
+        self::assertSame([1, 2, 6], self::ids($read->findBy($criteria, ['category.name' => 'DESC', 'id' => 'ASC'])));
+        // Without a locale of its own the read orders in the default locale of the items.
+        self::assertSame(
+            [1, 2, 6],
+            self::ids($this->items->read()->findBy($criteria, ['category.name' => 'ASC', 'id' => 'ASC'])),
+        );
+        // Category 30 belongs to category 10, whose own parent has no Ukrainian name.
+        self::assertSame([1, 2, 6], array_column(
+            $read->rows(['id'], $criteria, ['category.parent.name' => 'DESC', 'id' => 'ASC']),
+            'id',
+        ));
+
+        $locked = $this->connection->transactional(
+            fn(): array => $read->with(['category'])->forUpdate()
+                ->findBy($criteria, ['category.name' => 'ASC', 'id' => 'ASC']),
+        );
+        self::assertSame([6, 1, 2], self::ids($locked));
+        self::assertSame('Alpha UK', $locked[0]->relation('category')->value('name'));
+    }
+
+    public function testOrderPathsSeeSoftDeletedTargetsTheReadLoads(): void
+    {
+        $this->insertRows('repo_rel_categories', [
+            'id' => Types::INTEGER, 'parent_id' => Types::INTEGER, 'deleted_at' => Types::STRING,
+        ], [[30, 100, null]]);
+        $this->insertRows('repo_rel_category_translations', [
+            'category_id' => Types::INTEGER, 'locale' => Types::STRING, 'name' => Types::STRING,
+        ], [[30, 'uk', 'Zulu UK']]);
+        $this->insertRows('repo_rel_items', $this->itemTypes(), [[6, 30, 'SKU-6', null]]);
+        $read = $this->items->withLocale('uk', 'en');
+        $criteria = ['id IN' => [1, 3, 6]];
+        $order = ['category.name' => 'ASC', 'id' => 'ASC'];
+
+        // Item 3 belongs to the deleted category 20, "Hidden category" in English.
+        $all = $read->with([new Load('category', visibility: Visibility::All)])->findBy($criteria, $order);
+        self::assertSame([1, 3, 6], self::ids($all));
+        self::assertSame(20, $all[1]->relation('category')->value('id'));
+        // Without that load the category is missing, and NULL sorts first or last by platform.
+        self::assertNotSame([1, 3, 6], self::ids($read->with(['category'])->findBy($criteria, $order)));
+        self::assertNotSame([1, 3, 6], self::ids($read->findBy($criteria, $order)));
+    }
+
+    public function testLockingReadLocksTheRowsOfItsTableAndNotItsRelationLoads(): void
+    {
+        $other = $this->otherConnection();
+        $probes = [
+            'item' => 'SELECT 1 FROM repo_rel_items WHERE id = 1',
+            'translation' => "SELECT 1 FROM repo_rel_item_translations WHERE item_id = 1 AND locale = 'uk'",
+            'category' => 'SELECT 1 FROM repo_rel_categories WHERE id = 10',
+            'profile' => 'SELECT 1 FROM repo_rel_profiles WHERE item_id = 1',
+        ];
+        // Each probe can lock its row while no transaction holds it.
+        foreach ($probes as $probe) {
+            self::assertFalse(self::isLocked($other, $probe));
+        }
+        $joined = $this->connection->getDatabasePlatform() instanceof MariaDBPlatform;
+
+        $this->connection->beginTransaction();
+        try {
+            $items = $this->items->withLocale('uk', 'en')->with(['profile'])->forUpdate()
+                ->findBy(['id' => 1], ['category.name' => 'ASC']);
+            self::assertSame('One', $items[0]->relation('profile')->value('label'));
+            self::assertTrue(self::isLocked($other, $probes['item']));
+            // MariaDB has no FOR UPDATE OF, so its lock also covers the rows the statement joins.
+            self::assertSame($joined, self::isLocked($other, $probes['translation']));
+            self::assertSame($joined, self::isLocked($other, $probes['category']));
+            self::assertFalse(self::isLocked($other, $probes['profile']));
+        } finally {
+            $this->connection->rollBack();
+        }
+
+        self::assertFalse(self::isLocked($other, $probes['item']));
     }
 
     public function testRelatedSameRowGroupingCountAndPagination(): void

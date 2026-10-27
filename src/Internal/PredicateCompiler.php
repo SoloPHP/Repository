@@ -257,10 +257,7 @@ final class PredicateCompiler
                     . ' = ' . $this->db->qualified($pivot, $relation->foreignPivotKey),
             );
         } else {
-            $query->where($relation->keyCondition(
-                $this->db->qualified($parent->alias(), $relation->ownerKey($owner)),
-                $this->db->qualified($alias, $relation->targetKey($target)),
-            ));
+            $query->where($relation->joinCondition($this->db, $parent->alias(), $owner, $alias, $target));
         }
 
         $visibility = SoftDelete::condition($target, $exists->visibility, $fields->expression(...));

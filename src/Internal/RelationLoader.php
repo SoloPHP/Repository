@@ -38,7 +38,13 @@ final readonly class RelationLoader
                     $mapping->table,
                 ));
             }
-            $executor = new ReadExecutor($this->db, $target, $node->load->visibility, $inherited);
+            $executor = new ReadExecutor(
+                $this->db,
+                $target,
+                $node->load->visibility,
+                $inherited,
+                loads: $node->children,
+            );
             $query = $executor->selectAll($node->load->criteria, $node->load->orderBy ?: $relation->orderBy);
 
             $prepared[] = new PreparedLoad(

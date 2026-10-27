@@ -8,7 +8,6 @@ use Doctrine\DBAL\Types\Types;
 use InvalidArgumentException;
 use LogicException;
 use Solo\Repository\Internal\Database;
-use Solo\Repository\Internal\Dialect;
 use Solo\Repository\Internal\Locale;
 use Solo\Repository\Internal\RowMapper;
 use UnexpectedValueException;
@@ -191,35 +190,19 @@ final readonly class TranslationStore
      */
     private function upsert(int|string $id, array $locales, array $values, bool $update): int
     {
-        $mysql = $this->db->requireDialect('Translation upserts') === Dialect::MySQL;
-        $foreignKey = $this->db->quote($this->translations->foreignKey);
         $updates = [];
-        $updateParameters = [];
-        $updateTypes = [];
         if ($update) {
             foreach ($values as $column => $value) {
-                $quoted = $this->db->quote($column);
-                if ($mysql) {
-                    $updates[] = $quoted . ' = ?';
-                    $updateParameters[] = $value;
-                    $updateTypes[] = $this->translations->columns[$column];
-                } else {
-                    $updates[] = $quoted . ' = excluded.' . $quoted;
-                }
+                $updates[$column] = [$value, $this->translations->columns[$column]];
             }
         }
-
-        $localeColumn = $this->db->quote($this->translations->localeColumn);
-        $conflict = match (true) {
-            // MySQL reports a no-op duplicate update as zero affected rows (without CLIENT_FOUND_ROWS).
-            $mysql => ' ON DUPLICATE KEY UPDATE '
-                . ($update ? implode(', ', $updates) : $foreignKey . ' = ' . $foreignKey),
-            default => ' ON CONFLICT (' . $foreignKey . ', ' . $localeColumn . ')'
-                . ($update ? ' DO UPDATE SET ' . implode(', ', $updates) : ' DO NOTHING'),
-        };
-        // Keep a table named "excluded" distinct from the proposed-row pseudo-table.
-        $alias = $mysql ? null : 'br_target';
-        $columns = [$this->translations->foreignKey, $this->translations->localeColumn, ...array_keys($values)];
+        $key = [$this->translations->foreignKey, $this->translations->localeColumn];
+        [$alias, $conflict, $updateParameters, $updateTypes] = $this->db->upsertClause(
+            'Translation upserts',
+            $key,
+            $updates,
+        );
+        $columns = [...$key, ...array_keys($values)];
 
         $idType = $this->idType();
         $statements = [];

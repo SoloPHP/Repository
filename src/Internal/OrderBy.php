@@ -10,7 +10,8 @@ use InvalidArgumentException;
 final class OrderBy
 {
     /**
-     * Plain field names mapped to upper-case directions.
+     * Fields mapped to upper-case directions. A field is a field name or a dotted relation path
+     * to a field of a related mapping, such as "category.name"; reads resolve it.
      *
      * @param array<mixed> $orderBy
      * @return array<string, 'ASC'|'DESC'>
@@ -19,8 +20,8 @@ final class OrderBy
     {
         $normalized = [];
         foreach ($orderBy as $field => $direction) {
-            if (!is_string($field) || !Identifier::isValid($field)) {
-                throw new InvalidArgumentException('Order must use plain field names.');
+            if (!is_string($field) || !Identifier::isPath($field)) {
+                throw new InvalidArgumentException('Order must use field names or relation paths to fields.');
             }
             $direction = is_string($direction) ? strtoupper($direction) : null;
             if ($direction !== 'ASC' && $direction !== 'DESC') {

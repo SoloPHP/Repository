@@ -81,8 +81,10 @@ fields are rejected.
 - `BelongsTo`, `HasOne`, `HasMany`, and `BelongsToMany` in the **`Relations`**
   namespace, including nested batch loading, default collection order, and
   inherited locale/fallback.
+- Ordering by fields of `BelongsTo` targets, such as `category.name`.
 - Soft delete with explicit visibility, bounded ID iteration, atomic bulk
-  inserts, `lockForUpdate()` row locks, and `links()->attach/detach/sync()` for
+  inserts, native upserts by a unique key, `lockForUpdate()` row locks and
+  locking reads through `forUpdate()`, and `links()->attach/detach/sync()` for
   physical pivot writes.
 
 Schema migrations, multi-table reports, advisory locks, transaction boundaries

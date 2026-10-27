@@ -275,7 +275,8 @@ final class RelationMetadataTest extends TestCase
     public static function invalidDefaultOrders(): iterable
     {
         yield 'SQL in direction' => [['position' => 'ASC NULLS LAST']];
-        yield 'qualified field' => [['items.position' => 'ASC']];
+        yield 'quoted field' => [['"position"' => 'ASC']];
+        yield 'empty path segment' => [['items..position' => 'ASC']];
         yield 'list instead of map' => [['position']];
     }
 

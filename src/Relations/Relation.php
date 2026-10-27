@@ -6,6 +6,7 @@ namespace Solo\Repository\Relations;
 
 use Closure;
 use InvalidArgumentException;
+use Solo\Repository\Internal\Database;
 use Solo\Repository\Internal\KeyType;
 use Solo\Repository\Internal\OrderBy;
 use Solo\Repository\Mapping;
@@ -121,13 +122,24 @@ abstract readonly class Relation
     }
 
     /**
-     * Matches the qualified owner and target keys of a direct relation. The referenced primary
-     * key stays on the left, because SQLite compares under the collation of the left column.
+     * Matches the owner and target rows of a direct relation under their aliases in a statement.
+     * The referenced primary key stays on the left, because SQLite compares under the collation
+     * of the left column.
      *
      * @internal
+     * @param Mapping<object> $owner
+     * @param Mapping<object> $target
      */
-    public function keyCondition(string $ownerKey, string $targetKey): string
-    {
+    public function joinCondition(
+        Database $db,
+        string $ownerAlias,
+        Mapping $owner,
+        string $targetAlias,
+        Mapping $target,
+    ): string {
+        $ownerKey = $db->qualified($ownerAlias, $this->ownerKey($owner));
+        $targetKey = $db->qualified($targetAlias, $this->targetKey($target));
+
         return $this instanceof BelongsTo ? $targetKey . ' = ' . $ownerKey : $ownerKey . ' = ' . $targetKey;
     }
 

@@ -82,7 +82,7 @@ readonly class Repository
     /** @param array<string, mixed> $data */
     final public function insert(array $data): int
     {
-        return $this->executeInsert($this->validateInsert($data));
+        return $this->executeInsert([$this->validateInsert($data)]);
     }
 
     /** @param array<string, mixed> $data */
@@ -93,13 +93,13 @@ readonly class Repository
         if (array_key_exists($key, $data)) {
             /** @var int|string $id Normalized by validateInsert(). */
             $id = $data[$key];
-            $this->executeInsert($data);
+            $this->executeInsert([$data]);
 
             return $id;
         }
 
         $dialect = $this->db->requireDialect('Generated IDs');
-        [$sql, $parameters, $types] = $this->insertStatement(array_keys($data), [$data]);
+        [$sql, $parameters, $types] = $this->insertStatement([$data]);
         if ($dialect === Dialect::PostgreSQL) {
             $result = $this->db->connection->executeQuery(
                 $sql . ' RETURNING ' . $this->db->quote($key),
@@ -120,7 +120,9 @@ readonly class Repository
     }
 
     /**
-     * Inserts one rectangular batch atomically, splitting SQL at the parameter limit.
+     * Inserts one rectangular batch atomically, splitting SQL at the parameter limit. A batch
+     * that fits one statement runs as that statement, which is atomic on its own; a split batch
+     * runs its statements in one transaction.
      *
      * @param list<array<string, mixed>> $rows
      */
@@ -136,16 +138,73 @@ readonly class Repository
         $columns = array_keys($rows[0]);
         // An empty row uses the platform's single-row default-values INSERT.
         $size = $columns === [] ? 1 : min($batchSize, $this->db->batchSize(count($columns)));
+        if (count($rows) <= $size) {
+            return $this->executeInsert($rows);
+        }
 
-        return $this->db->connection->transactional(function () use ($rows, $columns, $size): int {
+        return $this->db->connection->transactional(function () use ($rows, $size): int {
             $affected = 0;
             foreach (array_chunk($rows, $size) as $chunk) {
-                [$sql, $parameters, $types] = $this->insertStatement($columns, $chunk);
-                $affected += (int) $this->db->connection->executeStatement($sql, $parameters, $types);
+                $affected += $this->executeInsert($chunk);
             }
 
             return $affected;
         });
+    }
+
+    /**
+     * Inserts the row of a unique key, or updates the row that already holds the key, in one
+     * statement. $data is written either way and $onInsert only into a new row, such as its
+     * explicit ID or creation time; the key of an existing row stays as it is, and with empty
+     * $data so does the rest of the row. The row holding the key is updated even when it is
+     * soft-deleted, and stays deleted.
+     *
+     * The key names the columns of one unique index or of the primary key: PostgreSQL and SQLite
+     * reject a key without one, while MySQL updates the row on a conflict over any unique index
+     * and inserts another row when no unique index covers the key.
+     *
+     * @param array<string, mixed> $key
+     * @param array<string, mixed> $data
+     * @param array<string, mixed> $onInsert
+     */
+    final public function upsert(array $key, array $data, array $onInsert = []): void
+    {
+        if ($key === []) {
+            throw new InvalidArgumentException('An upsert requires the columns of a unique key.');
+        }
+        if (in_array(null, $key, true)) {
+            throw new InvalidArgumentException('Upsert key values cannot be NULL.');
+        }
+        $row = $key + $data + $onInsert;
+        if (count($row) !== count($key) + count($data) + count($onInsert)) {
+            throw new InvalidArgumentException(
+                'An upsert names each column once: in the key, the data or the insert-only values.',
+            );
+        }
+        // A new row may get an explicit ID, but no upsert changes one, and none changes visibility.
+        $this->assertUnreserved($data, $this->mapping->primaryKey);
+        $this->assertUnreserved($row, $this->mapping->softDeleteColumn);
+        $row = $this->validateInsert($row);
+
+        $updates = [];
+        foreach ($data as $column => $value) {
+            $updates[$column] = [$value, $this->mapping->columnType($column)];
+        }
+        /** @var non-empty-list<string> $keyColumns */
+        $keyColumns = array_keys($key);
+        [$alias, $conflict, $updateParameters, $updateTypes] = $this->db->upsertClause(
+            'Upserts',
+            $keyColumns,
+            $updates,
+        );
+        [$sql, $parameters, $types] = $this->insertStatement([$row], $alias);
+        $this->db->assertParameters(count($parameters) + count($updateParameters));
+
+        $this->db->connection->executeStatement(
+            $sql . $conflict,
+            [...$parameters, ...$updateParameters],
+            [...$types, ...$updateTypes],
+        );
     }
 
     /** @param array<string, mixed> $patch */
@@ -161,11 +220,7 @@ readonly class Repository
     final public function updateBy(array|Filter $criteria, array $patch): int
     {
         $this->validateColumns($patch);
-        foreach ([$this->mapping->primaryKey, $this->mapping->softDeleteColumn] as $reserved) {
-            if ($reserved !== null && array_key_exists($reserved, $patch)) {
-                throw new InvalidArgumentException('Use dedicated operations instead of changing ID or visibility.');
-            }
-        }
+        $this->assertUnreserved($patch, $this->mapping->primaryKey, $this->mapping->softDeleteColumn);
 
         return $this->executeUpdate($criteria, $patch, Visibility::Active);
     }
@@ -228,9 +283,7 @@ readonly class Repository
     {
         $column = $this->mapping->requirePrimaryKey('lockForUpdate()');
         $ids = array_values($this->mapper->ids(is_array($ids) ? $ids : [$ids]));
-        if (!$this->db->connection->isTransactionActive()) {
-            throw new LogicException('Row locks require an active transaction.');
-        }
+        $this->db->assertTransaction();
         if ($this->mapper->keyType() === KeyType::Integer) {
             sort($ids);
         }
@@ -243,10 +296,7 @@ readonly class Repository
                 ->from($this->db->quote($this->mapping->table))
                 ->orderBy($key);
             $query->where($this->db->inList($query, $key, $type, $chunk));
-            if ($this->db->dialect() !== Dialect::SQLite) {
-                $query->forUpdate();
-            }
-            $result = $query->executeQuery();
+            $result = $this->db->executeLocked($query);
             try {
                 $result->fetchFirstColumn();
             } finally {
@@ -332,10 +382,10 @@ readonly class Repository
         return $data;
     }
 
-    /** @param array<string, mixed> $data Validated insert data. */
-    private function executeInsert(array $data): int
+    /** @param non-empty-list<array<string, mixed>> $rows Validated rows with the same columns. */
+    private function executeInsert(array $rows): int
     {
-        [$sql, $parameters, $types] = $this->insertStatement(array_keys($data), [$data]);
+        [$sql, $parameters, $types] = $this->insertStatement($rows);
 
         return (int) $this->db->connection->executeStatement($sql, $parameters, $types);
     }
@@ -343,12 +393,13 @@ readonly class Repository
     /**
      * One multi-row INSERT with positional parameters; no columns means one default-values row.
      *
-     * @param list<string> $columns
-     * @param non-empty-list<array<string, mixed>> $rows Validated rows with exactly these columns.
+     * @param non-empty-list<array<string, mixed>> $rows Validated rows with the same columns.
+     * @param string|null $alias The name of the target table within the statement, if not its own.
      * @return array{string, list<mixed>, list<string>}
      */
-    private function insertStatement(array $columns, array $rows): array
+    private function insertStatement(array $rows, ?string $alias = null): array
     {
+        $columns = array_keys($rows[0]);
         if ($columns === []) {
             return [
                 $this->db->platform()->getEmptyIdentityInsertSQL(
@@ -370,7 +421,20 @@ readonly class Repository
             }
         }
 
-        return [$this->db->insertSql($this->mapping->table, $columns, count($rows)), $parameters, $types];
+        return [$this->db->insertSql($this->mapping->table, $columns, count($rows), $alias), $parameters, $types];
+    }
+
+    /**
+     * @param array<array-key, mixed> $columns
+     * @param string|null ...$reserved Columns that only dedicated operations write.
+     */
+    private function assertUnreserved(array $columns, ?string ...$reserved): void
+    {
+        foreach ($reserved as $column) {
+            if ($column !== null && array_key_exists($column, $columns)) {
+                throw new InvalidArgumentException('Use dedicated operations instead of changing ID or visibility.');
+            }
+        }
     }
 
     /**
