@@ -11,7 +11,8 @@ use Solo\Repository\Internal\RowMapper;
 use Solo\Repository\Relations\BelongsToMany;
 
 /**
- * Physical pivot writes. Transactions provide rollback, not concurrent set serialization.
+ * Physical pivot writes. A pair another writer stored first is skipped, not raised; transactions
+ * provide rollback, not serialization of concurrent edits to one set.
  */
 final readonly class LinkSet
 {
@@ -200,10 +201,20 @@ final readonly class LinkSet
         return [$condition, [$id], [$type]];
     }
 
-    /** @param array<string, int|string> $ids */
+    /**
+     * Inserts the pairs the operation found missing. Another writer may store one of them after
+     * that read: the pair then conflicts over the pivot's required UNIQUE pair and is skipped,
+     * since it is the link the caller asked for. Every other error, a foreign-key violation
+     * among them, still propagates. Platforms without upserts insert the pairs as they are.
+     *
+     * @param array<string, int|string> $ids
+     */
     private function insertLinks(int|string $id, array $ids): void
     {
         $columns = [$this->relation->foreignPivotKey, $this->relation->relatedPivotKey];
+        [$alias, $skipStored] = $this->db->dialect() === null
+            ? [null, '']
+            : $this->db->upsertClause('Link inserts', $columns, []);
         $ownerType = $this->ownerType();
         $targetType = $this->targetType();
         foreach (array_chunk($ids, $this->db->batchSize(2)) as $chunk) {
@@ -214,7 +225,7 @@ final readonly class LinkSet
                 array_push($types, $ownerType, $targetType);
             }
             $this->db->connection->executeStatement(
-                $this->db->insertSql($this->relation->pivotTable, $columns, count($chunk)),
+                $this->db->insertSql($this->relation->pivotTable, $columns, count($chunk), $alias) . $skipStored,
                 $values,
                 $types,
             );

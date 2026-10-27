@@ -4,11 +4,18 @@ declare(strict_types=1);
 
 namespace Solo\Repository\Tests\Core;
 
+use Closure;
 use Doctrine\DBAL\Configuration;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\DriverManager;
 use Doctrine\DBAL\Exception\ForeignKeyConstraintViolationException;
 use Doctrine\DBAL\Logging\Middleware;
+use Doctrine\DBAL\Platforms\AbstractPlatform;
+use Doctrine\DBAL\Platforms\MariaDBPlatform;
+use Doctrine\DBAL\Platforms\MySQLPlatform;
+use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
+use Doctrine\DBAL\Platforms\SQLitePlatform;
+use Doctrine\DBAL\Platforms\SQLServerPlatform;
 use Doctrine\DBAL\Types\Types;
 use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -19,10 +26,13 @@ use Solo\Repository\Mapping;
 use Solo\Repository\Relations\BelongsToMany;
 use Solo\Repository\Relations\HasMany;
 use Solo\Repository\Repository;
+use Solo\Repository\Tests\Fixtures\RecordsStatements;
 use Stringable;
 
 final class LinkSetTest extends TestCase
 {
+    use RecordsStatements;
+
     private Connection $db;
     private Mapping $mapping;
     private Mapping $tags;
@@ -320,6 +330,45 @@ final class LinkSetTest extends TestCase
         yield [['2garbage']];
         yield [[[]]];
         yield [['id' => 1]];
+    }
+
+    /**
+     * A pair another writer stores between the operation's read and its INSERT conflicts over the
+     * pivot's UNIQUE pair; the INSERT skips it instead of failing. Platforms without upserts keep
+     * the plain INSERT.
+     */
+    #[DataProvider('pairInserts')]
+    public function testInsertsSkipPairsStoredSinceTheRead(AbstractPlatform $platform, string $insert): void
+    {
+        [$connection, $statements] = $this->recordingConnection($platform);
+        $connection->method('transactional')->willReturnCallback(
+            static fn (Closure $operation): mixed => $operation($connection),
+        );
+
+        (new Repository($connection, $this->mapping))->links('tags')->attach(1, [3, 4]);
+
+        $inserts = array_values(array_filter(
+            $statements->getArrayCopy(),
+            static fn (array $statement): bool => str_starts_with($statement[0], 'INSERT'),
+        ));
+        self::assertSame([[$insert, [1, 3, 1, 4], array_fill(0, 4, Types::INTEGER)]], $inserts);
+    }
+
+    /** @return iterable<string, array{AbstractPlatform, string}> */
+    public static function pairInserts(): iterable
+    {
+        $mysql = 'INSERT INTO `product_tag` (`product_id`, `tag_id`) VALUES (?, ?), (?, ?)'
+            . ' ON DUPLICATE KEY UPDATE `product_id` = `product_id`';
+        $conflict = 'INSERT INTO "product_tag" AS "br_target" ("product_id", "tag_id") VALUES (?, ?), (?, ?)'
+            . ' ON CONFLICT ("product_id", "tag_id") DO NOTHING';
+        yield 'MySQL' => [new MySQLPlatform(), $mysql];
+        yield 'MariaDB' => [new MariaDBPlatform(), $mysql];
+        yield 'PostgreSQL' => [new PostgreSQLPlatform(), $conflict];
+        yield 'SQLite' => [new SQLitePlatform(), $conflict];
+        yield 'other platforms' => [
+            new SQLServerPlatform(),
+            'INSERT INTO [product_tag] ([product_id], [tag_id]) VALUES (?, ?), (?, ?)',
+        ];
     }
 
     public function testNonManyToManyRelationsAreRejected(): void

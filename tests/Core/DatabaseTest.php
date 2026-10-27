@@ -137,7 +137,9 @@ final class DatabaseTest extends TestCase
                 . 'UNIQUE(product_id, locale))',
         );
         $connection->executeStatement('CREATE TABLE tags (id INTEGER PRIMARY KEY)');
-        $connection->executeStatement('CREATE TABLE product_tag (product_id INTEGER, tag_id INTEGER)');
+        $connection->executeStatement(
+            'CREATE TABLE product_tag (product_id INTEGER, tag_id INTEGER, UNIQUE(product_id, tag_id))',
+        );
         $connection->executeStatement('INSERT INTO tags VALUES (1), (2)');
         $repository = new Repository($connection, $this->productMapping());
 

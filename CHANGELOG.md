@@ -46,6 +46,17 @@ Initial release of **Solo Repository** (`solophp/repository`) with the
   may add public methods, and a subclass that declares a method of the same
   name then fails to load. Constructor parameters keep their names and order;
   a parameter added in a minor release is optional and comes last.
+- **Behavior change:** `LinkSet::attach()` and `sync()` skip a pair that
+  another writer stored after the operation read the set, instead of failing
+  on the pivot's unique key. Their INSERT carries `ON CONFLICT (pair) DO NOTHING`
+  on PostgreSQL and SQLite and `ON DUPLICATE KEY UPDATE` on MySQL and MariaDB;
+  foreign-key violations still propagate. Concurrent attaches of one pair now
+  both succeed on MySQL and on PostgreSQL in READ COMMITTED. MariaDB with
+  snapshot isolation (error 1020) and PostgreSQL in REPEATABLE READ or
+  SERIALIZABLE (a serialization failure) still refuse a transaction whose
+  snapshot is older than the other writer's commit, and an exact final set
+  still needs an owner lock. On PostgreSQL and SQLite these writes now fail on a
+  pivot without the UNIQUE pair that the guide already required.
 
 ### Changes since 1.0.0-RC4
 

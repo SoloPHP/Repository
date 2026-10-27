@@ -5,11 +5,16 @@ declare(strict_types=1);
 namespace Solo\Repository\Tests\Database;
 
 use Closure;
+use Doctrine\DBAL\Exception\DeadlockException;
+use Doctrine\DBAL\Exception\DriverException;
 use Doctrine\DBAL\Exception\ForeignKeyConstraintViolationException;
 use Doctrine\DBAL\Platforms\AbstractMySQLPlatform;
 use Doctrine\DBAL\Platforms\MariaDBPlatform;
+use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
 use Doctrine\DBAL\Schema\Schema;
+use Doctrine\DBAL\TransactionIsolationLevel;
 use Doctrine\DBAL\Types\Types;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Solo\Repository\Filter;
 use Solo\Repository\Load;
 use Solo\Repository\Mapping;
@@ -349,6 +354,50 @@ final class RelationsDatabaseTest extends DatabaseTestCase
         $links->sync(1, []);
         self::assertSame([], $this->linkedIds(1));
         self::assertFalse($this->connection->isTransactionActive());
+    }
+
+    /** @return iterable<string, array{?TransactionIsolationLevel}> */
+    public static function isolationLevels(): iterable
+    {
+        yield 'server default' => [null];
+        yield 'repeatable read' => [TransactionIsolationLevel::REPEATABLE_READ];
+    }
+
+    #[DataProvider('isolationLevels')]
+    public function testAttachSkipsALinkAnotherSessionStoredAfterItsRead(?TransactionIsolationLevel $isolation): void
+    {
+        if ($isolation !== null) {
+            $this->connection->setTransactionIsolation($isolation);
+        }
+        $platform = $this->connection->getDatabasePlatform();
+        // A snapshot taken before the other session's commit makes PostgreSQL above READ COMMITTED,
+        // and MariaDB with snapshot isolation (its default since 11.6), refuse the write instead.
+        $postgres = $platform instanceof PostgreSQLPlatform;
+        $refuses = ($postgres && $isolation !== null) || (
+            $platform instanceof MariaDBPlatform
+            && (int) $this->connection->fetchOne('SELECT @@innodb_snapshot_isolation') === 1
+        );
+        $other = $this->otherConnection();
+        $stored = false;
+        // The other session stores one of the pairs between attach()'s read and its INSERT.
+        $this->log->beforeStatement = static function (string $sql) use ($other, &$stored): void {
+            if (!$stored && str_starts_with($sql, 'INSERT INTO ')) {
+                $stored = true;
+                $other->insert('repo_rel_item_tags', ['item_id' => 2, 'tag_id' => 101]);
+            }
+        };
+
+        try {
+            $this->items->links('tags')->attach(2, [101, 103]);
+            self::assertFalse($refuses, 'Expected a serialization failure.');
+            self::assertSame([101, 102, 103], $this->linkedIds(2));
+        } catch (DriverException $exception) {
+            // The whole attach() rolls back, and the transaction has to start over.
+            self::assertTrue($refuses, $exception->getMessage());
+            self::assertTrue($postgres ? $exception instanceof DeadlockException : $exception->getCode() === 1020);
+            self::assertSame([101, 102], $this->linkedIds(2));
+        }
+        self::assertTrue($stored);
     }
 
     public function testLateForeignKeyFailureRollsBackSyncAndPreservesOuterTransaction(): void
