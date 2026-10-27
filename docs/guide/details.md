@@ -137,7 +137,7 @@ withLocale(string $locale, ?string $fallback = null): ReadQuery;
 with(array $relations): ReadQuery;         // list<string|Load>
 ```
 
-Последние две — короткие формы `read()->withLocale(...)` и `read()->with(...)`. Обычное чтение выглядит как `$products->read()->find($id)`. Бизнес-методы приложения могут оборачивать этот API; наследоваться от `BaseRepository` больше не требуется.
+Последние две — короткие формы `read()->withLocale(...)` и `read()->with(...)`. Обычное чтение выглядит как `$products->read()->find($id)`. Бизнес-методы приложения живут в сервисе, который владеет репозиторием, или в типизированном наследнике `Repository`: `readonly`-класс задаёт маппинг в своём конструкторе, контейнер внедряет его по типу, а статический анализ берёт модель из `@extends Repository<Model>`. Публичные методы `Repository` final — наследник добавляет свои методы, но не меняет унаследованные чтения и записи.
 
 Контракт `ReadQuery<T>`:
 
@@ -366,7 +366,7 @@ SQL builder, экранирование, параметры, типы и тра�
 
 | V3 | Solo Repository |
 |---|---|
-| Наследование и protected-настройки | `new Repository($db, new Mapping(...))`, композиция по умолчанию |
+| Наследование и protected-настройки | `new Repository($db, new Mapping(...))` или типизированный наследник, который задаёт маппинг в своём конструкторе; публичные методы `Repository` final |
 | Статический метод mapper по имени | Типизированный callable; `Model::fromArray(...)` адаптируется к преобразованным DBAL значениям |
 | Изменяемые/одноразовые `withLocale`, `with` | Независимый повторно используемый `ReadQuery` |
 | `find/findBy` на репозитории | `read()->find/findBy`, либо сразу `withLocale/with` |

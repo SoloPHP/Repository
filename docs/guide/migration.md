@@ -66,7 +66,7 @@ final class ProductRepository extends BaseRepository
 }
 ```
 
-Solo Repository `Repository` is final. Construct it from the application's DBAL `Connection` and a `Mapping`; keep domain-specific methods in a service or a wrapper that owns that repository. Inject the same connection separately wherever the application needs SQL or transactions.
+Construct a Solo Repository `Repository` from the application's DBAL `Connection` and a `Mapping`, or extend it into a [typed repository](api.md#typed-repositories) whose constructor fixes the mapping. Its public methods are final: a subclass adds methods of its own, it does not override reads or writes. Inject the same connection separately wherever the application needs SQL or transactions.
 
 ```php
 use Doctrine\DBAL\Types\Types;
@@ -469,7 +469,7 @@ The following v3 extension points have no equivalent in Solo Repository:
 
 | V3 feature | Migration |
 |---|---|
-| `RepositoryInterface` / subclassing `BaseRepository` | Own an instance of final `Repository`; define an application interface if needed |
+| `RepositoryInterface` / subclassing `BaseRepository` | Extend `Repository` into a typed repository with a fixed mapping, or own an instance; its public methods are final. Define an application interface if needed |
 | `getConnection()` and protected `queryBuilder()` | Inject `Connection` into the application component |
 | Protected `table()` with `applyCriteria()` | `read()->queryBuilder($alias, $criteria)`; add the SELECT, joins and `andWhere()` conditions to the returned DBAL builder |
 | `beginTransaction()/commit()/rollBack()/withTransaction()/inTransaction()` | Use DBAL `Connection` transaction methods |
