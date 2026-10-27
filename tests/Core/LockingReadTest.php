@@ -10,7 +10,6 @@ use Doctrine\DBAL\DriverManager;
 use Doctrine\DBAL\Logging\Middleware;
 use Doctrine\DBAL\Platforms\AbstractPlatform;
 use Doctrine\DBAL\Platforms\MariaDBPlatform;
-use Doctrine\DBAL\Platforms\MySQL84Platform;
 use Doctrine\DBAL\Platforms\MySQLPlatform;
 use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
 use Doctrine\DBAL\Query\QueryBuilder;
@@ -190,9 +189,11 @@ final class LockingReadTest extends TestCase
     #[DataProvider('lockClauses')]
     public function testServerLockClauseLocksOnlyTheReadTableWhereThePlatformCan(
         AbstractPlatform $platform,
+        string $serverVersion,
         string $clause,
     ): void {
         [$connection, $statements] = $this->recordingConnection($platform);
+        $connection->method('getServerVersion')->willReturn($serverVersion);
 
         (new Repository($connection, $this->mapping()))->read()->forUpdate()->find(5);
 
@@ -206,11 +207,13 @@ final class LockingReadTest extends TestCase
     public static function lockClauses(): iterable
     {
         // PostgreSQL cannot lock the nullable side of an outer join, so the lock names the read's table.
-        yield 'PostgreSQL' => [new PostgreSQLPlatform(), 'FOR UPDATE OF "br_base"'];
-        yield 'MySQL 8' => [new MySQL84Platform(), 'FOR UPDATE OF `br_base`'];
+        yield 'PostgreSQL' => [new PostgreSQLPlatform(), '17.2', 'FOR UPDATE OF "br_base"'];
+        // MySQL takes OF from 8.0.1, told by the server version on any MySQL platform class.
+        yield 'MySQL 8.4' => [new MySQLPlatform(), '8.4.6', 'FOR UPDATE OF `br_base`'];
+        yield 'MySQL 8.0' => [new MySQLPlatform(), '8.0.1', 'FOR UPDATE OF `br_base`'];
         // MariaDB and MySQL 5.7 have no OF: their lock also covers the rows the statement joins.
-        yield 'MariaDB' => [new MariaDBPlatform(), 'FOR UPDATE'];
-        yield 'MySQL 5.7' => [new MySQLPlatform(), 'FOR UPDATE'];
+        yield 'MariaDB' => [new MariaDBPlatform(), '12.3.1-MariaDB', 'FOR UPDATE'];
+        yield 'MySQL 5.7' => [new MySQLPlatform(), '5.7.44', 'FOR UPDATE'];
     }
 
     public function testTranslationAndOrderJoinsStayOutsideThePostgresLock(): void

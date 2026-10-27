@@ -9,7 +9,7 @@ use Doctrine\DBAL\Configuration;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\DriverManager;
 use Doctrine\DBAL\Logging\Middleware;
-use Doctrine\DBAL\Platforms\MySQL84Platform;
+use Doctrine\DBAL\Platforms\MySQLPlatform;
 use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
 use Doctrine\DBAL\Platforms\SQLServerPlatform;
 use Doctrine\DBAL\Types\Types;
@@ -212,7 +212,7 @@ final class UpsertTest extends TestCase
 
     public function testMysqlBindsTheUpdatedValuesAndKeepsARowForEmptyData(): void
     {
-        [$connection, $statements] = $this->recordingConnection(new MySQL84Platform());
+        [$connection, $statements] = $this->recordingConnection(new MySQLPlatform());
         $settings = new Repository($connection, $this->mapping());
         $created = new DateTimeImmutable('2026-01-02 03:04:05');
 
@@ -263,7 +263,7 @@ final class UpsertTest extends TestCase
 
     public function testTheParameterBudgetCountsTheBoundUpdateValues(): void
     {
-        [$connection, $statements] = $this->recordingConnection(new MySQL84Platform());
+        [$connection, $statements] = $this->recordingConnection(new MySQLPlatform());
         $settings = new Repository($connection, $this->mapping(), parameterLimit: 3);
 
         $settings->upsert(self::KEY, [], ['enabled' => true]);

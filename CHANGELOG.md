@@ -57,6 +57,12 @@ Initial release of **Solo Repository** (`solophp/repository`) with the
   snapshot is older than the other writer's commit, and an exact final set
   still needs an owner lock. On PostgreSQL and SQLite these writes now fail on a
   pivot without the UNIQUE pair that the guide already required.
+- A locking read on MySQL tells `FOR UPDATE OF` support by the server version,
+  8.0.1 or later, instead of by DBAL's `MySQL80Platform`. DBAL deprecates its
+  MySQL 8 platform classes and drops them with MySQL 5.7 support, after which
+  `MySQLPlatform` itself stands for MySQL 8; the lock keeps covering only the
+  read's table there. MySQL 5.7 and MariaDB keep the plain `FOR UPDATE`. The
+  package no longer refers to a deprecated DBAL platform class.
 
 ### Changes since 1.0.0-RC4
 
