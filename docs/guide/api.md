@@ -2,7 +2,7 @@
 
 This reference describes Solo Repository 1.0: PHP 8.3+, Doctrine DBAL `^4.3`, and the `Solo\Repository` namespace. Relation definitions live in `Solo\Repository\Relations`. See the [design and integration guide](details.md) and `examples/definitions.php` in the source checkout.
 
-`Repository<T>`, `Mapping<T>` and `ReadQuery<T>` use PHPDoc generics, where `T` is an object. `T` is covariant, so `Repository<Product>` is accepted where `Repository<object>` is expected. Relation definitions are generic over their owner and target models, so static analysis checks every `assign` callback against the target mapping. The runtime checks that hydration and relation assignment return objects; it does not enforce their concrete class. These classes, the configuration objects and the write helpers are `final readonly`. Readonly configuration does not make the shared DBAL connection, returned models or objects captured by callbacks immutable.
+`Repository<T>`, `Mapping<T>` and `ReadQuery<T>` use PHPDoc generics, where `T` is an object. `T` is covariant, so `Repository<Product>` is accepted where `Repository<object>` is expected. Relation definitions are generic over their owner and target models, so static analysis checks every `assign` callback against the target mapping. The runtime checks that hydration and relation assignment return objects; it does not enforce their concrete class. `Mapping`, `ReadQuery`, the configuration objects and the write helpers are `final readonly`; `Repository` is `readonly` and may be extended into a [typed repository](#typed-repositories). Readonly configuration does not make the shared DBAL connection, returned models or objects captured by callbacks immutable.
 
 The public API consists of the types and methods documented below. The `Internal` namespace and members marked `@internal` are implementation details without a semantic-versioning compatibility promise: the constructors of `ReadQuery`, `LinkSet` and `TranslationStore` (obtain them from a `Repository`), the properties of `Filter`, and `Relations\Relation::resolve()`. The abstract `Relation` base is not an extension point: use the four supplied final definitions. The legacy `BaseRepository`, `RepositoryInterface` and singular `Relation` namespace belong to the separate `solophp/base-repository` package; see the [migration guide](migration.md).
 
@@ -47,6 +47,39 @@ $id = $products->insertGetId(['sku' => 'TABLE-01', 'price' => '199.90']);
 $product = $products->read()->find($id); // Product|null
 $products->update($id, ['price' => '179.90']); // affected rows; no model reread
 ```
+
+## Typed repositories
+
+An application may extend `Repository` with a `readonly` class that fixes the mapping in its own constructor. Each table then has a class of its own: a container can inject it by type, static analysis knows its model from `@extends`, and queries about that table can live beside it. The public methods of `Repository` are final, so a subclass adds a constructor and methods of its own and cannot change what the inherited ones do; the repository's state stays private to it.
+
+```php
+use Doctrine\DBAL\Connection;
+
+/** @extends Repository<Product> */
+final readonly class ProductRepository extends Repository
+{
+    public function __construct(Connection $connection)
+    {
+        parent::__construct($connection, self::mapping());
+    }
+
+    /** @return Mapping<Product> */
+    public static function mapping(): Mapping
+    {
+        return new Mapping(table: 'products', columns: [/* … */], hydrate: static fn(array $row): Product => /* … */);
+    }
+
+    /** @return list<Product> */
+    public function cheaperThan(string $price): array
+    {
+        return $this->read()->findBy(['price <' => $price], ['price' => 'ASC']);
+    }
+}
+
+$product = (new ProductRepository($db))->read()->find($id); // Product|null
+```
+
+A `readonly` class can only be extended by a `readonly` class. A static `mapping()` also gives relations a target factory: `target: ProductRepository::mapping(...)`.
 
 ## Mapping and types
 

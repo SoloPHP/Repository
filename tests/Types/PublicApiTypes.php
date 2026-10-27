@@ -131,6 +131,28 @@ function mappingsWithoutAHydratorReadRows(Connection $connection): void
     acceptsAnyRepository($repository);
 }
 
+/** @extends Repository<Product> */
+final readonly class ProductRepository extends Repository
+{
+    public function __construct(Connection $connection)
+    {
+        parent::__construct($connection, new Mapping(
+            table: 'products',
+            columns: ['id' => Types::INTEGER, 'category_id' => Types::INTEGER],
+            hydrate: static fn (array $row): Product => new Product(),
+        ));
+    }
+}
+
+function typedRepositoriesKeepTheirModel(Connection $connection): void
+{
+    $repository = new ProductRepository($connection);
+    assertType('Solo\Repository\Tests\Types\Product|null', $repository->read()->find(1));
+    assertType('list<Solo\Repository\Tests\Types\Product>', $repository->read()->findBy());
+
+    acceptsAnyRepository($repository);
+}
+
 function relationsInferTheirOwnerAndTarget(): void
 {
     $categories = categoryMapping();

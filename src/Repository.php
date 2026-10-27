@@ -24,9 +24,14 @@ use Solo\Repository\Internal\SoftDelete;
 /**
  * Explicit writes and independent read queries over one mapped table.
  *
+ * An application may extend it with a readonly class that fixes the mapping in
+ * its own constructor, giving each table a typed service to inject, and adds
+ * methods of its own. The public methods are final: a subclass adds to the
+ * repository and cannot change what it does.
+ *
  * @template-covariant T of object
  */
-final readonly class Repository
+readonly class Repository
 {
     private Database $db;
 
@@ -44,13 +49,13 @@ final readonly class Repository
     }
 
     /** @return ReadQuery<T> */
-    public function read(): ReadQuery
+    final public function read(): ReadQuery
     {
         return new ReadQuery($this->db, $this->mapping, Visibility::Active, null, LoadPlan::from([]));
     }
 
     /** @return ReadQuery<T> */
-    public function withLocale(string $locale, ?string $fallback = null): ReadQuery
+    final public function withLocale(string $locale, ?string $fallback = null): ReadQuery
     {
         return $this->read()->withLocale($locale, $fallback);
     }
@@ -59,29 +64,29 @@ final readonly class Repository
      * @param list<string|Load> $relations
      * @return ReadQuery<T>
      */
-    public function with(array $relations): ReadQuery
+    final public function with(array $relations): ReadQuery
     {
         return $this->read()->with($relations);
     }
 
-    public function links(string $relation): LinkSet
+    final public function links(string $relation): LinkSet
     {
         return new LinkSet($this->db, $this->mapping, $relation);
     }
 
-    public function translations(): TranslationStore
+    final public function translations(): TranslationStore
     {
         return new TranslationStore($this->db, $this->mapping);
     }
 
     /** @param array<string, mixed> $data */
-    public function insert(array $data): int
+    final public function insert(array $data): int
     {
         return $this->executeInsert($this->validateInsert($data));
     }
 
     /** @param array<string, mixed> $data */
-    public function insertGetId(array $data): int|string
+    final public function insertGetId(array $data): int|string
     {
         $key = $this->mapping->requirePrimaryKey('insertGetId()');
         $data = $this->validateInsert($data);
@@ -119,7 +124,7 @@ final readonly class Repository
      *
      * @param list<array<string, mixed>> $rows
      */
-    public function insertMany(array $rows, int $batchSize = 500): int
+    final public function insertMany(array $rows, int $batchSize = 500): int
     {
         if ($batchSize < 1) {
             throw new InvalidArgumentException('Expected a positive batch size.');
@@ -144,7 +149,7 @@ final readonly class Repository
     }
 
     /** @param array<string, mixed> $patch */
-    public function update(int|string $id, array $patch): int
+    final public function update(int|string $id, array $patch): int
     {
         return $this->updateBy([$this->mapping->requirePrimaryKey('update()') => $this->mapper->id($id)], $patch);
     }
@@ -153,7 +158,7 @@ final readonly class Repository
      * @param array<string, mixed>|Filter $criteria
      * @param array<string, mixed> $patch
      */
-    public function updateBy(array|Filter $criteria, array $patch): int
+    final public function updateBy(array|Filter $criteria, array $patch): int
     {
         $this->validateColumns($patch);
         foreach ([$this->mapping->primaryKey, $this->mapping->softDeleteColumn] as $reserved) {
@@ -165,13 +170,13 @@ final readonly class Repository
         return $this->executeUpdate($criteria, $patch, Visibility::Active);
     }
 
-    public function delete(int|string $id): int
+    final public function delete(int|string $id): int
     {
         return $this->deleteBy([$this->mapping->requirePrimaryKey('delete()') => $this->mapper->id($id)]);
     }
 
     /** @param array<string, mixed>|Filter $criteria */
-    public function deleteBy(array|Filter $criteria): int
+    final public function deleteBy(array|Filter $criteria): int
     {
         $column = $this->mapping->softDeleteColumn;
         if ($column === null) {
@@ -188,7 +193,7 @@ final readonly class Repository
         return $this->executeUpdate($criteria, [$column => $value], Visibility::Active);
     }
 
-    public function restore(int|string $id): int
+    final public function restore(int|string $id): int
     {
         if ($this->mapping->softDeleteColumn === null) {
             throw new LogicException('Restore requires a soft-delete column.');
@@ -201,13 +206,13 @@ final readonly class Repository
         );
     }
 
-    public function purge(int|string $id): int
+    final public function purge(int|string $id): int
     {
         return $this->purgeBy([$this->mapping->requirePrimaryKey('purge()') => $this->mapper->id($id)]);
     }
 
     /** @param array<string, mixed>|Filter $criteria */
-    public function purgeBy(array|Filter $criteria): int
+    final public function purgeBy(array|Filter $criteria): int
     {
         return $this->executeDelete($criteria, Visibility::All);
     }
@@ -219,7 +224,7 @@ final readonly class Repository
      *
      * @param int|string|list<int|string> $ids
      */
-    public function lockForUpdate(int|string|array $ids): void
+    final public function lockForUpdate(int|string|array $ids): void
     {
         $column = $this->mapping->requirePrimaryKey('lockForUpdate()');
         $ids = array_values($this->mapper->ids(is_array($ids) ? $ids : [$ids]));
