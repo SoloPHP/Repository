@@ -20,6 +20,18 @@ final class Identifier
         return preg_match('/\A' . self::PATTERN . '\z/', $name) === 1;
     }
 
+    /** One identifier or several joined by dots, such as a relation path or a path to a field. */
+    public static function isPath(string $path): bool
+    {
+        foreach (explode('.', $path) as $segment) {
+            if (!self::isValid($segment)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     public static function assert(string $name): void
     {
         if (!self::isValid($name)) {

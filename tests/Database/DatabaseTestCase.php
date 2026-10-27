@@ -70,6 +70,18 @@ abstract class DatabaseTestCase extends TestCase
         }
     }
 
+    /** Whether another session finds the rows of a SELECT locked: it asks for them without waiting. */
+    protected static function isLocked(Connection $other, string $select, array $parameters = []): bool
+    {
+        try {
+            $other->fetchOne($select . ' FOR UPDATE NOWAIT', $parameters);
+
+            return false;
+        } catch (\Doctrine\DBAL\Exception) {
+            return true;
+        }
+    }
+
     /** Another session on the same database, for observing locks held by the main connection. */
     protected function otherConnection(): Connection
     {

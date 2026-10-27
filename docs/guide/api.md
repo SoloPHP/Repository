@@ -143,6 +143,7 @@ Constructing repositories, queries, link sets and translation stores never opens
 ReadQuery::withLocale(string $locale, ?string $fallback = null): self;
 ReadQuery::with(array $relations): self;
 ReadQuery::withVisibility(Visibility $visibility): self;
+ReadQuery::forUpdate(): self;
 
 ReadQuery::find(int|string $id): ?object;               // T|null
 ReadQuery::findOneBy(array|Filter $criteria, array $orderBy = []): ?object;
@@ -169,7 +170,9 @@ ReadQuery::iterateById(array|Filter $criteria = [], int $batchSize = 500): itera
 ReadQuery::queryBuilder(string $alias, array|Filter $criteria = []): QueryBuilder;
 ```
 
-`criteria` is an associative array or `Filter`. `orderBy` maps readable fields to `ASC`/`DESC`, case-insensitively. All `with*()` methods return a new query; executing a query does not consume its settings. `with()` replaces the complete include list, and `with([])` clears it.
+`criteria` is an associative array or `Filter`. `orderBy` maps readable fields to `ASC`/`DESC`, case-insensitively. All `with*()` methods and `forUpdate()` return a new query; executing a query does not consume its settings. `with()` replaces the complete include list, and `with([])` clears it.
+
+In `findBy()`, `findOneBy()` and `rows()`, an `orderBy` key may also be a dotted path through `BelongsTo` relations to a readable field of their target, such as `category.name` or `category.parent.name`. Each target on a path is LEFT JOINed once per statement on its primary key, over the rows that a load of the same relation path in the read sees: its active rows, unless the read loads that relation with another visibility. A list that shows soft-deleted categories through `with([new Load('category', visibility: Visibility::All)])` thus also orders by their names; only the load's visibility applies, not its criteria. A row whose reference is NULL, dangling or not visible orders as one with NULL there; where NULL sorts follows the database (first in ascending order on MySQL, MariaDB and SQLite, last on PostgreSQL). A translated target field is read in the query locale and fallback, which the target inherits as relation loads do. Paths through `HasOne`, `HasMany` or `BelongsToMany`, which could match several rows, are rejected before SQL. The default order of a to-many relation and the order of a `Load` take the same paths, resolved from the target.
 
 - `find()` and `findOneBy()` return NULL when no visible row matches. They limit the root SELECT to one row.
 - `findBy()` materializes the requested models and their includes. No automatic pagination count is performed.
@@ -177,6 +180,7 @@ ReadQuery::queryBuilder(string $alias, array|Filter $criteria = []): QueryBuilde
 - `count()` and `exists()` do not hydrate models or resolve/load includes. Relation predicates in their criteria still apply. `exists()` selects a constant with a one-row limit.
 - `sum()`, `min()`, `max()` and `avg()` aggregate one readable field, including a translated field under the query locale, over the rows `count()` would count. `sum()`, `min()` and `max()` convert the result through the field's DBAL type, so a decimal sum is an exact string and `max('created_at')` a `DateTimeImmutable`. `sum()` returns zero of that type when nothing matches; `min()`, `max()` and `avg()` return NULL. `avg()` returns a float. `sum()` and `avg()` require a smallint, integer, bigint, decimal, float or smallfloat field and reject other fields before SQL.
 - `queryBuilder()` returns a new DBAL `QueryBuilder` over the rows `count()` would count, for SQL the other methods cannot express; see [the DBAL escape hatch](#transactions-and-the-dbal-escape-hatch). It rejects nonempty includes.
+- `forUpdate()` returns the same read as a locking one: `find()`, `findOneBy()`, `findBy()`, `rows()`, `exists()` and every batch of `iterateById()` run `SELECT ... FOR UPDATE` and lock the rows they read until the surrounding transaction ends; outside a transaction they throw `LogicException`. Unlike a plain read in a REPEATABLE READ transaction, which answers from the transaction's snapshot, a locking read never returns an older version of a row: MySQL reads the latest committed row, while PostgreSQL and MariaDB (with `innodb_snapshot_isolation`, its default since 11.6) reject a row changed since the snapshot with a serialization failure, after which the transaction must start over. The lock covers rows of the read's own table: PostgreSQL and MySQL 8 lock with `FOR UPDATE OF`, while MariaDB, which lacks it, also locks the translation and order rows the statement joins. Relation loads read without locks. Aggregates and `queryBuilder()` of a locking read throw `LogicException`. SQLite has no row locks and runs the plain SELECT. Rows lock in the order the database reads them; where transactions lock overlapping sets of rows, read them in key order or take `lockForUpdate()` first. MySQL and MariaDB lock every row they read to answer the statement, so with an order no index serves, such as a relation path, a limited locking read locks all matching rows, not just the page.
 - Without `orderBy`, ordering is unspecified. Add the primary key as a final tie-breaker for stable pages. Negative limit/offset values are rejected. `limit: 0` validates query settings and returns an empty list without executing the read.
 
 ```php
@@ -387,6 +391,7 @@ Visibility is applied outside the user's Boolean group. A condition on `deleted_
 Repository::insert(array $data): int;
 Repository::insertGetId(array $data): int|string;
 Repository::insertMany(array $rows, int $batchSize = 500): int;
+Repository::upsert(array $key, array $data, array $onInsert = []): void;
 Repository::update(int|string $id, array $patch): int;
 Repository::updateBy(array|Filter $criteria, array $patch): int;
 Repository::delete(int|string $id): int;
@@ -409,7 +414,9 @@ With soft deletion, update methods affect only active rows. Delete methods set a
 
 `lockForUpdate()` locks the physical rows with the given primary keys until the surrounding transaction ends, regardless of visibility, and rejects calls outside a transaction. IDs are normalized and deduplicated, and rows are locked in key order, which keeps concurrent lockers from deadlocking. Large key sets are split into statements of at most 5,000 keys. Integer keys are sorted before splitting, so the order holds across statements; string keys follow the database collation within each statement. It uses the platform's `SELECT ... FOR UPDATE`; SQLite has no row locks and runs the plain SELECT. Cross-process advisory locks, such as one critical section per order, stay in the application.
 
-`insertMany()` takes a list of rows with identical column sets; key order may differ. It validates row structure before writing, splits by both `batchSize` and the parameter budget, and wraps all chunks in one transaction/savepoint. A later chunk failure rolls back earlier chunks. An empty list returns zero; batch size must still be positive. It returns affected rows, not generated IDs.
+`insertMany()` takes a list of rows with identical column sets; key order may differ. It validates row structure before writing and splits by both `batchSize` and the parameter budget. A batch that fits one statement runs as that statement, which is atomic on its own; a split batch wraps all its chunks in one transaction/savepoint, so a later chunk failure rolls back earlier chunks. Like a failed `insert()`, a one-statement batch that fails inside a caller's transaction on PostgreSQL aborts that transaction; only a split batch rolls back to its own savepoint. An empty list returns zero; batch size must still be positive. It returns affected rows, not generated IDs.
+
+`upsert()` writes the row of a unique key in one native statement: `ON CONFLICT` on PostgreSQL and SQLite, `ON DUPLICATE KEY UPDATE` on MySQL and MariaDB. It inserts `key + data + onInsert` as a new row or, when a row already holds the key, updates that row's `data` columns and leaves its key and other columns as they are. `onInsert` holds what only a new row gets, such as an explicit ID or a creation time; with empty `data` an existing row stays unchanged. The key must be nonempty, hold no NULL and name the columns of one unique index or of the primary key: PostgreSQL and SQLite use them as the conflict target and reject a key without such an index, while MySQL and MariaDB update the row on a conflict over any unique index of the table and insert another row when none covers the key. Each column appears once across the three arrays; `data` cannot change the primary key, and none of them the soft-delete column. The new row is validated like `insert()`, so a mapping without generated IDs needs the ID in `key` or `onInsert`. The row holding the key is updated even when it is soft-deleted, and stays deleted; `restore()` it explicitly. Affected-row counts of upserts differ between platforms, so `upsert()` returns nothing: read the row back by its key.
 
 ## LinkSet
 
@@ -443,7 +450,7 @@ $db->transactional(static function () use ($products, $id): void {
 });
 ```
 
-Single CRUD statements and translation upserts do not add transactions. Composite operations use DBAL transactions, including nested savepoints in an outer transaction. The package does not close the application connection.
+Single CRUD statements, upserts, translation upserts and an `insertMany()` that fits one statement do not add transactions. Composite operations use DBAL transactions, including nested savepoints in an outer transaction. The package does not close the application connection.
 
 For joins, aggregates over several tables, advisory locks, raw projections, special types or other SQL features, use DBAL. To keep a mapping's criteria in such SQL, start from `ReadQuery::queryBuilder()`:
 
@@ -465,11 +472,11 @@ Everything the caller adds is plain DBAL: joined tables get no visibility or loc
 | Failure | Expected category |
 |---|---|
 | Invalid metadata, unknown fields, unsupported filters/options, invalid IDs or parameter budget | `InvalidArgumentException` |
-| Missing translation metadata, restore without soft deletion, unsupported generated-ID/upsert platform | `LogicException` |
+| Missing translation metadata, restore without soft deletion, unsupported generated-ID/upsert platform, locking read outside a transaction, aggregate or query builder of a locking read | `LogicException` |
 | Non-object hydration/assignment result, invalid relation factory result, multiple HasOne matches, invalid generated-ID result | `UnexpectedValueException` |
 | SQL, FK, UNIQUE or DBAL type-conversion failure | Original DBAL/driver exception |
 | Application callback failure or incompatible PHP parameter/return declaration | Original exception or PHP `TypeError` |
 
 Validation happens before package SQL where possible; target relations are lazy, and custom callbacks/types can fail during execution. Exception messages and internal implementation types are not a parsing API.
 
-SQLite is covered by the main suite; MySQL 8.4, MariaDB 12.3 and PostgreSQL 17 are covered by the real-database matrix. MariaDB uses the MySQL code paths for generated IDs and upserts. Other DBAL platforms are not supported. Migrations must supply correct PK/FK types and collation, nullable translation/soft-delete fields, translation/pivot uniqueness and HasOne uniqueness; the package does not introspect these guarantees. There are no composite primary keys, alternate-key relations, schema generation, caches, change tracking, cascaded object writes or model identity guarantees.
+SQLite is covered by the main suite; MySQL 8.4, MariaDB 12.3 and PostgreSQL 17 are covered by the real-database matrix. MariaDB uses the MySQL code paths for generated IDs and upserts; its locking reads also lock the rows they join, since it has no `FOR UPDATE OF`. Other DBAL platforms are not supported. Migrations must supply correct PK/FK types and collation, nullable translation/soft-delete fields, translation/pivot uniqueness and HasOne uniqueness; the package does not introspect these guarantees. There are no composite primary keys, alternate-key relations, schema generation, caches, change tracking, cascaded object writes or model identity guarantees.

@@ -6,6 +6,7 @@ namespace Solo\Repository\Internal;
 
 use Closure;
 use Doctrine\DBAL\Query\QueryBuilder;
+use Doctrine\DBAL\Result;
 use Generator;
 use InvalidArgumentException;
 use Solo\Repository\Filter;
@@ -29,12 +30,18 @@ final readonly class ReadExecutor
     /** @var RowMapper<T> */
     private RowMapper $mapper;
 
-    /** @param Mapping<T> $mapping */
+    /**
+     * @param Mapping<T> $mapping
+     * @param bool $locked Whether the statements run as locking reads of this table's rows.
+     * @param LoadPlan|null $loads The relations loaded with the rows; an order path through one sees its rows.
+     */
     public function __construct(
         private Database $db,
         private Mapping $mapping,
         private Visibility $visibility = Visibility::Active,
         ?Locale $locale = null,
+        private bool $locked = false,
+        private ?LoadPlan $loads = null,
     ) {
         SoftDelete::assertSupported($mapping, $visibility);
         $this->locale = Locale::effective($locale, $mapping);
@@ -87,7 +94,7 @@ final readonly class ReadExecutor
         }
         $query->select(...$projection);
         foreach (OrderBy::normalize($orderBy) as $field => $direction) {
-            $query->addOrderBy($fields->expression($field), $direction);
+            $query->addOrderBy($fields->orderExpression($field), $direction);
         }
 
         $this->applyCriteria($query, $fields, $criteria);
@@ -134,7 +141,7 @@ final readonly class ReadExecutor
         [$query, $fields] = $this->createQuery();
         $query->select($select($fields));
         $this->applyCriteria($query, $fields, $criteria);
-        $result = $query->setMaxResults($limit)->executeQuery();
+        $result = $this->execute($query->setMaxResults($limit));
         try {
             return $result->fetchOne();
         } finally {
@@ -182,10 +189,7 @@ final readonly class ReadExecutor
             self::ALIAS,
             $this->db->quote($ownerMapping->table),
             'br_owner',
-            $relation->keyCondition(
-                $this->db->qualified('br_owner', $relation->ownerKey($ownerMapping)),
-                $this->db->qualified(self::ALIAS, $relation->targetKey($this->mapping)),
-            ),
+            $relation->joinCondition($this->db, 'br_owner', $ownerMapping, self::ALIAS, $this->mapping),
         )
             ->addSelect($ownerKey . ' AS ' . $this->db->quote($this->ownerColumn()))
             ->andWhere($this->db->inList(
@@ -285,7 +289,7 @@ final readonly class ReadExecutor
     /** @return list<array<string, mixed>> */
     public function fetchRows(QueryBuilder $query): array
     {
-        $result = $query->executeQuery();
+        $result = $this->execute($query);
         try {
             return $result->fetchAllAssociative();
         } finally {
@@ -379,6 +383,12 @@ final readonly class ReadExecutor
         }
     }
 
+    /** Runs a read statement; a locking read locks the rows of this table that it reads. */
+    private function execute(QueryBuilder $query): Result
+    {
+        return $this->locked ? $this->db->executeLocked($query, self::ALIAS) : $query->executeQuery();
+    }
+
     /** The owner key column of a joined result, named apart from every mapped field. */
     private function ownerColumn(): string
     {
@@ -395,7 +405,7 @@ final readonly class ReadExecutor
     private function createQuery(string $alias = self::ALIAS): array
     {
         $query = $this->db->connection->createQueryBuilder();
-        $fields = new FieldResolver($this->db, $this->mapping, $query, $alias, $this->locale);
+        $fields = new FieldResolver($this->db, $this->mapping, $query, $alias, $this->locale, loads: $this->loads);
         $query->from($this->db->quote($this->mapping->table), $alias);
 
         return [$query, $fields];

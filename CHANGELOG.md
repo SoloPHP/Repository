@@ -32,9 +32,39 @@ Initial release of **Solo Repository** (`solophp/repository`) with the
 - A bound-parameter budget that follows the platform limit and can be replaced
   per repository with `parameterLimit`; internal key lists stop at 5,000 keys
   per statement. IN lists are bound as one DBAL list parameter.
-- Soft delete with `purge`/`purgeBy`, `lockForUpdate` row locks, transactional
-  `insertMany`, and many-to-many `LinkSet` operations.
+- Soft delete with `purge`/`purgeBy`, `lockForUpdate` row locks and locking
+  reads, native upserts by a unique key, atomic `insertMany`, and many-to-many
+  `LinkSet` operations.
 - SQLite tests, MySQL 8.4/MariaDB 12.3/PostgreSQL 17 integration tests, and a PHP/DBAL CI matrix.
+
+### Changes since 1.0.0-RC4
+
+- `ReadQuery::forUpdate()` returns the same read as a locking one: `find()`,
+  `findOneBy()`, `findBy()`, `rows()`, `exists()` and `iterateById()` run
+  `SELECT ... FOR UPDATE` and lock the rows they read until the transaction
+  ends, and throw `LogicException` outside a transaction. Unlike
+  `lockForUpdate()` followed by a plain read, which a REPEATABLE READ
+  transaction answers from its snapshot, a locking read never returns an older
+  version of a row: MySQL reads the latest committed one, while PostgreSQL and
+  MariaDB report a serialization failure. PostgreSQL and MySQL 8 lock only the
+  rows of the read's table (`FOR UPDATE OF`); MariaDB also locks the rows the
+  statement joins. Relation loads read without locks, and aggregates and
+  `queryBuilder()` of a locking read throw `LogicException`.
+- `orderBy` of `findBy()`, `findOneBy()` and `rows()` accepts dotted paths
+  through `BelongsTo` relations to a field of the target, such as
+  `category.name`. Each target is LEFT JOINed once per statement over the rows
+  a load of the same relation in the read sees (its active rows without one),
+  and translated target fields follow the locale of the query. Default relation
+  orders and `Load` orders take the same paths, resolved from the target mapping.
+- `Repository::upsert($key, $data, $onInsert = [])` inserts the row of a unique
+  key, or updates the row that already holds it, in one native statement:
+  `ON CONFLICT` on PostgreSQL and SQLite, `ON DUPLICATE KEY UPDATE` on MySQL
+  and MariaDB. `$onInsert` values go only into a new row.
+- **Behavior change:** `insertMany()` runs a batch that fits one statement
+  without a transaction or savepoint; only a batch split into several
+  statements is wrapped in one. Inside a caller's transaction on PostgreSQL, a
+  failure of such a batch now aborts that transaction, as a failed `insert()`
+  does, instead of rolling back to a savepoint the caller could continue from.
 
 ### Changes since 1.0.0-RC3
 

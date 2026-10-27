@@ -8,7 +8,9 @@ use Doctrine\DBAL\ArrayParameterType;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\ParameterType;
 use Doctrine\DBAL\Platforms\AbstractPlatform;
+use Doctrine\DBAL\Platforms\MySQL80Platform;
 use Doctrine\DBAL\Query\QueryBuilder;
+use Doctrine\DBAL\Result;
 use Doctrine\DBAL\Types\Type;
 use InvalidArgumentException;
 use LogicException;
@@ -116,6 +118,38 @@ final class Database
         return [$converted, $listType];
     }
 
+    /** Row locks end with the transaction that holds them; outside one they would end with their statement. */
+    public function assertTransaction(): void
+    {
+        if (!$this->connection->isTransactionActive()) {
+            throw new LogicException('Row locks require an active transaction.');
+        }
+    }
+
+    /**
+     * Runs a SELECT that locks the rows it reads until the transaction ends. Given the alias of
+     * one table, PostgreSQL and MySQL 8 lock only the rows of that table (FOR UPDATE OF), as
+     * PostgreSQL cannot lock the nullable side of an outer join; MariaDB and MySQL 5.7 have no OF
+     * and also lock the rows the statement joins. SQLite has no row locks and runs the plain SELECT.
+     */
+    public function executeLocked(QueryBuilder $query, ?string $alias = null): Result
+    {
+        $this->assertTransaction();
+        $dialect = $this->dialect();
+        if ($dialect === Dialect::SQLite) {
+            return $query->executeQuery();
+        }
+        if ($alias !== null && ($dialect === Dialect::PostgreSQL || $this->platform() instanceof MySQL80Platform)) {
+            return $this->connection->executeQuery(
+                $query->getSQL() . ' FOR UPDATE OF ' . $this->quote($alias),
+                $query->getParameters(),
+                $query->getParameterTypes(),
+            );
+        }
+
+        return (clone $query)->forUpdate()->executeQuery();
+    }
+
     public function assertParameters(int $count): void
     {
         $limit = $this->parameterLimit();
@@ -184,6 +218,55 @@ final class Database
         return 'INSERT INTO ' . $this->quote($table) . ($alias === null ? '' : ' AS ' . $this->quote($alias))
             . ' (' . implode(', ', array_map($this->quote(...), $columns)) . ') VALUES '
             . implode(', ', array_fill(0, $rows, $tuple));
+    }
+
+    /**
+     * What turns an INSERT into an upsert: on a conflict over the key, the given columns of the
+     * existing row take their new values, or with none the row stays unchanged. MySQL binds the
+     * new values again after the rows; PostgreSQL and SQLite read them from the proposed row,
+     * which the INSERT keeps apart from a table named "excluded" by aliasing its own table.
+     *
+     * @param string $feature What the upsert writes, for the error on a platform without upserts.
+     * @param non-empty-list<string> $key The conflict target; MySQL reacts to a conflict over any unique index.
+     * @param array<string, array{mixed, string}> $updates The new value and DBAL type of each updated column.
+     * @return array{?string, string, list<mixed>, list<string>} The alias for insertSql(), the clause that
+     *         follows the INSERT, and the parameters with types that the clause binds.
+     */
+    public function upsertClause(string $feature, array $key, array $updates): array
+    {
+        if ($this->requireDialect($feature) === Dialect::MySQL) {
+            $assignments = [];
+            $parameters = [];
+            $types = [];
+            foreach ($updates as $column => [$value, $type]) {
+                $assignments[] = $this->quote($column) . ' = ?';
+                $parameters[] = $value;
+                $types[] = $type;
+            }
+            // Assigning a key column to itself leaves the existing row unchanged, and MySQL then
+            // reports it as unaffected (without CLIENT_FOUND_ROWS): affected rows count insertions.
+            $unchanged = $this->quote($key[0]) . ' = ' . $this->quote($key[0]);
+
+            return [
+                null,
+                ' ON DUPLICATE KEY UPDATE ' . ($assignments === [] ? $unchanged : implode(', ', $assignments)),
+                $parameters,
+                $types,
+            ];
+        }
+
+        $assignments = [];
+        foreach (array_keys($updates) as $column) {
+            $assignments[] = $this->quote($column) . ' = excluded.' . $this->quote($column);
+        }
+
+        return [
+            'br_target',
+            ' ON CONFLICT (' . implode(', ', array_map($this->quote(...), $key)) . ')'
+                . ($assignments === [] ? ' DO NOTHING' : ' DO UPDATE SET ' . implode(', ', $assignments)),
+            [],
+            [],
+        ];
     }
 
     public function quote(string $identifier): string

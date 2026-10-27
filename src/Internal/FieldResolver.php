@@ -6,11 +6,14 @@ namespace Solo\Repository\Internal;
 
 use Doctrine\DBAL\Query\QueryBuilder;
 use Doctrine\DBAL\Types\Types;
+use InvalidArgumentException;
 use LogicException;
 use Solo\Repository\Mapping;
+use Solo\Repository\Relations\BelongsTo;
+use Solo\Repository\Visibility;
 
 /**
- * Resolves logical read fields and adds translation joins once per SQL statement.
+ * Resolves logical read fields and adds translation and ordering joins once per SQL statement.
  *
  * @internal
  */
@@ -20,9 +23,13 @@ final class FieldResolver
     private readonly ?Locale $locale;
     private readonly QueryBuilder $parameters;
 
+    /** @var array<string, self> Fields of the BelongsTo targets joined for ordering, by relation path. */
+    private array $targets = [];
+
     /**
      * @param Mapping<object> $mapping
      * @param QueryBuilder|null $parameters Statement that binds locale parameters; a subquery binds on its root.
+     * @param LoadPlan|null $loads The relations the read loads; an order join sees the rows its load sees.
      */
     public function __construct(
         private readonly Database $db,
@@ -31,6 +38,7 @@ final class FieldResolver
         private readonly string $alias,
         ?Locale $locale,
         ?QueryBuilder $parameters = null,
+        private readonly ?LoadPlan $loads = null,
     ) {
         $this->locale = Locale::effective($locale, $mapping);
         $this->parameters = $parameters ?? $query;
@@ -65,6 +73,21 @@ final class FieldResolver
             : 'COALESCE(' . $primary . ', ' . $this->db->qualified($this->alias . '_fallback', $field) . ')';
     }
 
+    /**
+     * A read field, or a field of a BelongsTo target named by a dotted relation path such as
+     * "category.name". Each target is joined once per statement over the rows a load of that
+     * relation in the same read sees (active ones without such a load), so a row without a
+     * visible target orders as one with NULL there.
+     */
+    public function orderExpression(string $field): string
+    {
+        $dot = strrpos($field, '.');
+
+        return $dot === false
+            ? $this->expression($field)
+            : $this->target(substr($field, 0, $dot))->expression(substr($field, $dot + 1));
+    }
+
     /** A read field under its own name; without a locale, a translated field reads as NULL. */
     public function projection(string $field): string
     {
@@ -76,6 +99,52 @@ final class FieldResolver
         return array_key_exists($field, $this->mapping->columns)
             ? $expression
             : $expression . ' AS ' . $this->db->quote($field);
+    }
+
+    /**
+     * The fields of the BelongsTo target at the end of a relation path, LEFT JOINed on first use.
+     * The join sees the target rows its load in the same read sees, so a list that shows a
+     * soft-deleted category through a load of every row also orders by that category's name.
+     */
+    private function target(string $path): self
+    {
+        if (isset($this->targets[$path])) {
+            return $this->targets[$path];
+        }
+
+        $dot = strrpos($path, '.');
+        $owner = $dot === false ? $this : $this->target(substr($path, 0, $dot));
+        $name = $dot === false ? $path : substr($path, $dot + 1);
+        $relation = $owner->mapping->relation($name);
+        if (!$relation instanceof BelongsTo) {
+            throw new InvalidArgumentException(
+                sprintf('An order path follows BelongsTo relations only; "%s" is not one.', $name),
+            );
+        }
+        $target = $relation->resolve($owner->mapping);
+        $load = $owner->loads?->nodes[$name] ?? null;
+        $visibility = $load?->load->visibility ?? Visibility::Active;
+        SoftDelete::assertSupported($target, $visibility);
+        $alias = $this->alias . '_order' . (count($this->targets) + 1);
+        $fields = new self(
+            $this->db,
+            $target,
+            $this->query,
+            $alias,
+            $this->locale,
+            $this->parameters,
+            $load?->children,
+        );
+        $condition = $relation->joinCondition($this->db, $owner->alias, $owner->mapping, $alias, $target);
+        $visible = SoftDelete::condition($target, $visibility, $fields->expression(...));
+        $this->query->leftJoin(
+            $owner->alias,
+            $this->db->quote($target->table),
+            $alias,
+            $visible === null ? $condition : $condition . ' AND ' . $visible,
+        );
+
+        return $this->targets[$path] = $fields;
     }
 
     private function joinTranslations(Locale $locale): void

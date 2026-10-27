@@ -112,6 +112,12 @@ function relationsAcceptTypedAssignCallbacks(Connection $connection): void
 
     assertType('float|null', $repository->read()->avg('id'));
     $repository->lockForUpdate([1, '2']);
+    assertType(
+        'Solo\Repository\ReadQuery<Solo\Repository\Tests\Types\Product>',
+        $repository->with(['category'])->forUpdate(),
+    );
+    assertType('Solo\Repository\Tests\Types\Product|null', $repository->read()->forUpdate()->find(1));
+    $repository->upsert(['category_id' => 1], [], ['id' => 2]);
 
     acceptsAnyRepository($repository);
 }

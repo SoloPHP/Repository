@@ -133,7 +133,7 @@ final class LoadPlanTest extends TestCase
     {
         yield [['name' => 'ASC NULLS LAST']];
         yield [['name' => true]];
-        yield [['category.name' => 'ASC']];
+        yield [['category..name' => 'ASC']];
         yield [['name']];
     }
 }
