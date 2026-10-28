@@ -91,6 +91,9 @@ final class PredicateCompilerTest extends TestCase
         yield 'not in' => [['id NOT IN' => [1, 3]], [2, 4, 5]];
         yield 'like' => [['name LIKE' => 'A%'], [1]];
         yield 'not like' => [['name NOT LIKE' => 'A%'], [2, 3, 4, 5]];
+        yield 'like escaped percent' => [['name LIKE' => '100\\%%'], [5]];
+        yield 'like escaped underscore' => [['name LIKE' => '%\\_%'], [5]];
+        yield 'not like escaped percent' => [['name NOT LIKE' => '%\\%%'], [1, 2, 3, 4]];
         yield 'null equality' => [['note' => null], [1]];
         yield 'null inequality' => [['note !=' => null], [2, 3, 4, 5]];
         yield 'empty string is a value' => [['note' => ''], [2]];
@@ -131,6 +134,19 @@ final class PredicateCompilerTest extends TestCase
         self::assertSame([$value], array_values($builder->getParameters()));
         self::assertSame([Types::STRING], array_values($builder->getParameterTypes()));
         self::assertSame([4], $this->executeIds($builder->where($sql)));
+    }
+
+    public function testLikePatternsEscapeWithABackslash(): void
+    {
+        $builder = $this->builder();
+        $sql = $this->compiler($builder)->compile(['name LIKE' => '%a', 'note NOT LIKE' => '%\\\\']);
+
+        self::assertSame(
+            '("i"."name" LIKE :predicate1 ESCAPE \'\\\' AND "i"."note" NOT LIKE :predicate2 ESCAPE \'\\\')',
+            $sql,
+        );
+        self::assertSame(['%a', '%\\\\'], array_values($builder->getParameters()));
+        self::assertSame([2, 3], $this->executeIds($builder->where($sql)));
     }
 
     public function testScalarsKeepTheirDbalTypeAndInListsBindAsOneList(): void
@@ -208,6 +224,8 @@ final class PredicateCompilerTest extends TestCase
         yield 'null not in' => [['id NOT IN' => [null]]];
         yield 'null greater' => [['price >' => null]];
         yield 'null like' => [['name LIKE' => null]];
+        yield 'like ending in an unpaired escape' => [['name LIKE' => 'Alpha\\']];
+        yield 'not like of three backslashes' => [['name NOT LIKE' => '\\\\\\']];
         yield 'invalid later leaf' => [['name' => 'Alpha', 'unknown' => 1]];
         yield 'invalid array branch after false' => [['id IN' => [], 'unknown' => 1]];
         yield 'invalid all branch after false' => [Filter::all(['id IN' => []], ['unknown' => 1])];

@@ -1,6 +1,6 @@
 # Public API reference
 
-This reference describes Solo Repository 1.0: PHP 8.3+, Doctrine DBAL `^4.3`, and the `Solo\Repository` namespace. Relation definitions live in `Solo\Repository\Relations`. See the [design and integration guide](details.md) and `examples/definitions.php` in the source checkout.
+This reference describes Solo Repository 1.1: PHP 8.3+, Doctrine DBAL `^4.3`, and the `Solo\Repository` namespace. Relation definitions live in `Solo\Repository\Relations`. See the [design and integration guide](details.md) and `examples/definitions.php` in the source checkout.
 
 `Repository<T>`, `Mapping<T>` and `ReadQuery<T>` use PHPDoc generics, where `T` is an object. `T` is covariant, so `Repository<Product>` is accepted where `Repository<object>` is expected. Relation definitions are generic over their owner and target models, so static analysis checks every `assign` callback against the target mapping. The runtime checks that hydration and relation assignment return objects; it does not enforce their concrete class. `Mapping`, `ReadQuery`, the configuration objects and the write helpers are `final readonly`; `Repository` is `readonly` and may be extended into a [typed repository](#typed-repositories). Readonly configuration does not make the shared DBAL connection, returned models or objects captured by callbacks immutable.
 
@@ -250,9 +250,30 @@ $criteria = Filter::all(
 );
 ```
 
-Related predicates filter owners without duplicating their rows. They do not restrict what `with()` loads. Field paths such as `tags.slug`, raw SQL, implicit scopes and collection sorting are not accepted. LIKE wildcards, case sensitivity, collation and NULL ordering follow the database.
+Related predicates filter owners without duplicating their rows. They do not restrict what `with()` loads. Field paths such as `tags.slug`, raw SQL, implicit scopes and collection sorting are not accepted. Case sensitivity, collation and NULL ordering follow the database; LIKE escaping does not (see [LIKE patterns](#like-patterns)).
 
 Every statement has a budget of bound parameters, including locale JOINs and nested EXISTS, in which every value of an IN list counts. By default it is the platform limit: 65,535 for PostgreSQL and MySQL/MariaDB, 32,766 for SQLite 3.32 or later, and 900 for older SQLite and other platforms. `new Repository($db, $mapping, parameterLimit: 2000)` replaces it for that repository, its queries and its relation loads, for example to reject large root IN filters early. The value must be positive and must not exceed what the server accepts; raise it only on a platform whose real limit is above the default. Keyset iteration reserves one parameter for continuation. Oversized root criteria are rejected rather than split: splitting would change ordering, pagination or Boolean semantics. Loader batches, `insertMany()` and `LinkSet` split their own internal work within this budget; an operation whose single row does not fit, such as a two-parameter pivot row under a budget of 1, throws InvalidArgumentException. Internal key lists (relation loads, `lockForUpdate()` and `LinkSet` deletes) also hold at most 5,000 keys per statement, because longer IN lists can exceed MySQL's range-optimizer memory and turn index lookups into full scans.
+
+## LIKE patterns
+
+`LIKE` and `NOT LIKE` take SQL patterns: `%` matches any run of characters and `_` matches one character. On every supported database `\` escapes the character after it, so `\%`, `\_` and `\\` match `%`, `_` and `\` themselves; `\` before any other character matches that character. `Like` turns plain text, such as a search term from a request, into a pattern that matches the text literally:
+
+```php
+Like::escape(string $text): string;     // the text with "\", "%" and "_" escaped
+Like::contains(string $text): string;   // "%" . Like::escape($text) . "%"
+Like::startsWith(string $text): string; // Like::escape($text) . "%"
+Like::endsWith(string $text): string;   // "%" . Like::escape($text)
+```
+
+```php
+use Solo\Repository\Like;
+
+$products->read()->findBy(['sku LIKE' => Like::startsWith($prefix)], ['sku' => 'ASC']);
+$products->read()->count(['name NOT LIKE' => Like::contains('50%')]);
+$products->read()->findBy(['sku LIKE' => 'CH-' . Like::escape($series) . '-%']);
+```
+
+A pattern that ends in an unpaired `\` throws `InvalidArgumentException` before SQL, because the databases disagree on it: PostgreSQL rejects it, MySQL and MariaDB match a backslash, SQLite matches nothing. Patterns from `Like` never end in one: `Like::endsWith('\\')` ends in `\\`. Case sensitivity is the database's: SQLite ignores the case of ASCII letters, MySQL and MariaDB follow the column's collation, and PostgreSQL compares case-sensitively. A pattern with a fixed prefix, such as one from `startsWith()`, can use an index on MySQL and MariaDB, on PostgreSQL with a `text_pattern_ops` index or the C collation, and on SQLite with a `COLLATE NOCASE` index.
 
 ## Translation metadata and locale
 
@@ -477,7 +498,7 @@ Everything the caller adds is plain DBAL: joined tables get no visibility or loc
 
 | Failure | Expected category |
 |---|---|
-| Invalid metadata, unknown fields, unsupported filters/options, invalid IDs or parameter budget | `InvalidArgumentException` |
+| Invalid metadata, unknown fields, unsupported filters/options, a LIKE pattern ending in an unpaired `\`, invalid IDs or parameter budget | `InvalidArgumentException` |
 | Missing translation metadata, restore without soft deletion, unsupported generated-ID/upsert platform, locking read outside a transaction, aggregate or query builder of a locking read | `LogicException` |
 | Non-object hydration/assignment result, invalid relation factory result, multiple HasOne matches, invalid generated-ID result | `UnexpectedValueException` |
 | SQL, FK, UNIQUE or DBAL type-conversion failure | Original DBAL/driver exception |

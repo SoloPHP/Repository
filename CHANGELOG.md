@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.1.0 — 2026-10-28
+
+### Fixes
+
+- `LIKE` and `NOT LIKE` escape with `\` on every supported database, so `\%`,
+  `\_` and `\\` match `%`, `_` and `\` themselves. SQLite has no default escape
+  character, and under `NO_BACKSLASH_ESCAPES` neither has MySQL, nor MariaDB for
+  single-byte character sets, so there `50\%` matched `50\` followed by
+  anything. A LIKE, also in `queryBuilder()` SQL, now ends in `ESCAPE '\'` on
+  SQLite and in `ESCAPE X'5C'` on MySQL and MariaDB. Both are literals: a bound
+  escape character would cost a pattern with a fixed prefix its index range on
+  MySQL and SQLite. PostgreSQL, which always escapes with `\`, gets no clause,
+  so LIKE on `bytea` fields keeps working.
+
+### Features
+
+- `Like::escape()`, `contains()`, `startsWith()` and `endsWith()` turn plain
+  text, such as a search term, into a LIKE pattern that matches it literally.
+
+### Behavior changes
+
+- On SQLite, and on MySQL and MariaDB under `NO_BACKSLASH_ESCAPES`, a `\` in a
+  LIKE pattern escapes the character after it instead of matching a backslash:
+  the pattern `C:\dir` now matches `C:dir`, and a backslash is written `\\`, as
+  on PostgreSQL and by default on MySQL and MariaDB. Patterns without `\` match
+  as before.
+- A LIKE pattern that ends in an unpaired `\` throws `InvalidArgumentException`
+  before SQL. PostgreSQL already rejected it, while MySQL, MariaDB and SQLite
+  matched a trailing backslash.
+
 ## 1.0.0 — 2026-10-27
 
 First stable release of **Solo Repository** (`solophp/repository`) with the

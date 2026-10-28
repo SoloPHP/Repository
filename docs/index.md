@@ -22,7 +22,7 @@ features:
     details: Map an existing table to ordinary PHP objects. Values are converted before your hydrator runs; partial reads return typed rows.
   - icon: 🔎
     title: Reusable queries
-    details: Branch independent ReadQuery settings for locale, visibility, and includes. Group criteria with Filter and select related owners with EXISTS.
+    details: Branch independent ReadQuery settings for locale, visibility, and includes. Group criteria with Filter, select related owners with EXISTS, and search with LIKE patterns that escape the same way on every database.
   - icon: ✍️
     title: Explicit writes
     details: CRUD returns affected rows or a requested ID. Atomic bulk inserts and pivot writes join the application's transactions.

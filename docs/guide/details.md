@@ -4,7 +4,7 @@ Solo Repository provides typed reads, explicit writes, translations with one fal
 
 ## What is included
 
-`Mapping`, `Repository`, `ReadQuery`, `Filter::all/any/not/related`, `Visibility`, `Translations`, `TranslationStore`, four relation types, `Load` and `LinkSet`. Reads of models and projections, ordering by fields of `BelongsTo` targets, locking reads, count/exists, CRUD, atomic `insertMany`, native upserts by a unique key, soft delete, batched iteration by ID, translations with one fallback rule and batch loading of nested relations. The runnable examples `examples/crud.php`, `examples/translations.php` and `examples/relations.php` use in-memory SQLite:
+`Mapping`, `Repository`, `ReadQuery`, `Filter::all/any/not/related`, `Like`, `Visibility`, `Translations`, `TranslationStore`, four relation types, `Load` and `LinkSet`. Reads of models and projections, ordering by fields of `BelongsTo` targets, LIKE patterns that escape the same way on every database, locking reads, count/exists, CRUD, atomic `insertMany`, native upserts by a unique key, soft delete, batched iteration by ID, translations with one fallback rule and batch loading of nested relations. The runnable examples `examples/crud.php`, `examples/translations.php` and `examples/relations.php` use in-memory SQLite:
 
 ```sh
 composer install
@@ -27,7 +27,7 @@ Solo Repository turns database rows into ordinary PHP objects, resolves translat
 
 ## Testing on MySQL, MariaDB and PostgreSQL
 
-The shared suite checks generated IDs and CRUD, decimal/bool/date/JSON conversion, soft delete and keyset iteration, native row upserts and PATCH upserts of translations, the single fallback rule, four relation types, nested EXISTS and ordering by `BelongsTo` paths. Locking reads are checked with a second session: which rows the lock holds and how such a read differs from the snapshot of a REPEATABLE READ transaction on each database. A second session also stores a pair between the read and the insert of `attach()`: at the server's isolation level and at REPEATABLE READ the suite checks where the conflict is skipped and where the transaction is refused. Separate scenarios check batch boundaries, a statement with the server's maximum number of parameters (65,535), ordering of a 905-item collection, release of the previous page, string keys and native PostgreSQL UUIDs, rollback of a late batch and continuation of an outer transaction after a savepoint. The schemas have real FK and UNIQUE constraints; the tests run SQL on the servers without platform mocks.
+The shared suite checks generated IDs and CRUD, decimal/bool/date/JSON conversion, LIKE escaping (on MySQL and MariaDB also under `NO_BACKSLASH_ESCAPES`), soft delete and keyset iteration, native row upserts and PATCH upserts of translations, the single fallback rule, four relation types, nested EXISTS and ordering by `BelongsTo` paths. Locking reads are checked with a second session: which rows the lock holds and how such a read differs from the snapshot of a REPEATABLE READ transaction on each database. A second session also stores a pair between the read and the insert of `attach()`: at the server's isolation level and at REPEATABLE READ the suite checks where the conflict is skipped and where the transaction is refused. Separate scenarios check batch boundaries, a statement with the server's maximum number of parameters (65,535), ordering of a 905-item collection, release of the previous page, string keys and native PostgreSQL UUIDs, rollback of a late batch and continuation of an outer transaction after a savepoint. The schemas have real FK and UNIQUE constraints; the tests run SQL on the servers without platform mocks.
 
 `.github/workflows/tests.yml` keeps three jobs of the main SQLite suite and runs `Database` on each of the three databases for the same combinations:
 
@@ -81,7 +81,7 @@ MySQL 8.4, MariaDB 12.3 and PostgreSQL 17 are the verified server platforms. Mar
 | Relations | Explicit definitions and assign functions; batch loading instead of queries from objects |
 | Complex SQL | A real DBAL `QueryBuilder`: `ReadQuery::queryBuilder()` with the mapping's criteria, or the application's own `Connection` |
 
-Not part of 1.0: unit of work, identity map, lazy proxies, dirty tracking, cascading graph saves, schema generation, query cache, event bus, advisory locks, a container of its own and separate Composer packages. The application defines business operations, transactions across several repositories and retry rules.
+Not part of 1.1: unit of work, identity map, lazy proxies, dirty tracking, cascading graph saves, schema generation, query cache, event bus, advisory locks, a container of its own and separate Composer packages. The application defines business operations, transactions across several repositories and retry rules.
 
 ## Structure
 
@@ -97,11 +97,11 @@ Repository<T> ── Mapping<T> + Connection
    └── links(name) → LinkSet
 ```
 
-Public types: `Repository<T>`, `Mapping<T>`, `ReadQuery<T>`, `Filter`, `Visibility`, `Load`, `Translations`, four relation definitions, `TranslationStore` and `LinkSet`. The type `T` is given by PHPDoc generics for static analysis and is covariant; relation definitions are generic over owner and target, so the analyser checks `assign` against the target's mapping. At runtime the package checks that the hydrator and `assign` return an object. The `Internal` namespace and members marked `@internal` are not a supported application API: the constructors of `ReadQuery`, `LinkSet` and `TranslationStore` (they come from `Repository`), the properties of `Filter` and `Relation::resolve()`.
+Public types: `Repository<T>`, `Mapping<T>`, `ReadQuery<T>`, `Filter`, `Like`, `Visibility`, `Load`, `Translations`, four relation definitions, `TranslationStore` and `LinkSet`. The type `T` is given by PHPDoc generics for static analysis and is covariant; relation definitions are generic over owner and target, so the analyser checks `assign` against the target's mapping. At runtime the package checks that the hydrator and `assign` return an object. The `Internal` namespace and members marked `@internal` are not a supported application API: the constructors of `ReadQuery`, `LinkSet` and `TranslationStore` (they come from `Repository`), the properties of `Filter` and `Relation::resolve()`.
 
 Inside, a few small components each own one responsibility:
 
-- `Database`: the connection plus platform facts (dialect, parameter limit, quoting), resolved lazily.
+- `Database`: the connection plus platform facts (dialect, parameter limit, quoting, LIKE escape), resolved lazily.
 - `ReadExecutor`: creates a new DBAL builder for every execution.
 - `PredicateCompiler`: validates filters as a whole, folds constants into a typed tree of conditions and renders it into DBAL expressions and parameters.
 - `FieldResolver`: checks a column and returns a plain or a localized SQL expression.
@@ -121,7 +121,7 @@ The package has no SQL AST of its own, no dialect engine and no public `select/f
 
 One `int|string` primary key is supported, or none. `primaryKey: null` describes a table without a single-column key, for example with a composite key: its rows are read, inserted and changed by criteria (`findBy`, `rows`, `count`, aggregates, `queryBuilder`, `insert`, `insertMany`, `updateBy`, `deleteBy`, `purgeBy`). Operations by ID (`find`, `insertGetId`, `update`, `delete`, `restore`, `purge`, `lockForUpdate`) throw `LogicException`, and `iterateById` throws `InvalidArgumentException`, all before SQL. Such a table has no generated ID, and an inserted row has at least one column.
 
-Without a primary key there are no translations, and the only possible relation is `BelongsTo`: `HasOne`, `HasMany` and `BelongsToMany` find their owner by its key. `HasOne` and `HasMany` can load such a table, but `BelongsTo` and `BelongsToMany` cannot, since they reference the target's key. `Filter::related` through its `BelongsTo` works with any key type, while loading needs an integer target key: string keys are compared in SQL by the database collation, through the owner's primary key. Addressing a row by a composite key and relations over alternative unique keys are outside 1.0. The hydrator gets every declared base and translated column, not `SELECT *`.
+Without a primary key there are no translations, and the only possible relation is `BelongsTo`: `HasOne`, `HasMany` and `BelongsToMany` find their owner by its key. `HasOne` and `HasMany` can load such a table, but `BelongsTo` and `BelongsToMany` cannot, since they reference the target's key. `Filter::related` through its `BelongsTo` works with any key type, while loading needs an integer target key: string keys are compared in SQL by the database collation, through the owner's primary key. Addressing a row by a composite key and relations over alternative unique keys are outside 1.1. The hydrator gets every declared base and translated column, not `SELECT *`.
 
 A given primary key must be part of `columns`; a relation's foreign key is part of the `columns` of its side. `generatedId: true` is allowed only for a compatible integer primary key. A mapping is validated at once; the requirements on a lazy target side are checked when the relation is first resolved.
 
@@ -196,7 +196,9 @@ A plain array is an AND over fields:
 ['status' => 'active', 'price >=' => '50.00', 'id IN' => [1, 2, 3]]
 ```
 
-The operators are `=`, `!=`, `>`, `>=`, `<`, `<=`, `IN`, `NOT IN`, `LIKE` and `NOT LIKE`; no suffix means `=`. `= null` and `!= null` become IS NULL and IS NOT NULL. NULL with other operators, NULL inside IN and an array without an explicit IN are rejected. `IN []` is false and `NOT IN []` is true. LIKE uses SQL wildcard semantics; case, collation and NULL order depend on the database.
+The operators are `=`, `!=`, `>`, `>=`, `<`, `<=`, `IN`, `NOT IN`, `LIKE` and `NOT LIKE`; no suffix means `=`. `= null` and `!= null` become IS NULL and IS NOT NULL. NULL with other operators, NULL inside IN and an array without an explicit IN are rejected. `IN []` is false and `NOT IN []` is true. LIKE takes the SQL wildcards `%` and `_` and escapes with `\` on every database; case, collation and NULL order depend on the database.
+
+The escape character is the one part of LIKE that the package makes the same everywhere. PostgreSQL always escapes with `\`. SQLite has no default escape character, and under `NO_BACKSLASH_ESCAPES` neither has MySQL, nor MariaDB for single-byte character sets such as latin1; in that mode both also read the string `'\\'` as two characters. So the compiler ends every LIKE with `ESCAPE '\'` on SQLite and `ESCAPE X'5C'` on MySQL and MariaDB, where the hex literal is one backslash in every SQL mode. The character is a literal, not a bound parameter: with a bound one, MySQL and SQLite no longer plan a pattern with a fixed prefix as an index range. PostgreSQL gets no clause, which also keeps LIKE working on `bytea` fields, where an ESCAPE literal would compare bytea with text. A pattern that ends in an unpaired `\` is rejected before SQL, because the databases disagree on it. `Like::escape()`, `contains()`, `startsWith()` and `endsWith()` build patterns that match text literally.
 
 The key carries both the field and the operator, so criteria keys are built only from fixed strings in code, never from request parameters or other input. Whoever controls a key chooses the operator: `filter[price >=]=0` would turn an equality into a comparison. When users choose the fields to filter by, map each allowed name to a fixed key.
 
@@ -244,7 +246,7 @@ Fallback is thus `COALESCE(primary.field, fallback.field)`, chosen independently
 
 One `FieldResolver` serves the projection, WHERE, ORDER BY and conditions inside relations. A filter on `name` checks exactly the value with fallback that will be shown.
 
-The effective language pair of the root read is inherited by relations and relation predicates. When the root has neither `withLocale()` nor `defaultLocale`, in each branch the first translated entity with a `defaultLocale` applies it, and it is inherited from there; translated entities above it read NULL in their translated fields. For one language across the whole graph, set `withLocale()` on the root, even if the root itself is not translated. A per-load language override is not part of 1.0.
+The effective language pair of the root read is inherited by relations and relation predicates. When the root has neither `withLocale()` nor `defaultLocale`, in each branch the first translated entity with a `defaultLocale` applies it, and it is inherited from there; translated entities above it read NULL in their translated fields. For one language across the whole graph, set `withLocale()` on the root, even if the root itself is not translated. A per-load language override is not part of 1.1.
 
 When a model is read from a translated repository with `defaultLocale`, that language means a JOIN by default. `rows`, `count` and `exists` add a translation JOIN only when their fields or filters need it. Unlocalized physical rows can be read directly through DBAL; there is no separate `withoutLocale()`.
 
@@ -293,7 +295,7 @@ Integer keys are compared by value: a `BelongsTo` target is selected by the uniq
 
 The batch unit of many-to-many is the owners. The target SELECT is limited by an EXISTS over the pivot and the batch of owner IDs, not by a list of all target IDs. All targets of one owner are sorted in one SQL query; the loader walks that result in database order and distributes it through the pivot. Concatenating independently sorted target chunks, or sorting in PHP instead of by the database collation, is not used.
 
-Owners are selected and limited before collections are loaded. Results are matched by typed row keys. A non-empty `Load.orderBy` sets the order of each collection's items; without it the order is not guaranteed. `HasOne` requires the foreign key to be unique in the target table; several matches are a data error. A limit per parent, lazy loading, cross-connection relations and automatic cascades are not part of 1.0.
+Owners are selected and limited before collections are loaded. Results are matched by typed row keys. A non-empty `Load.orderBy` sets the order of each collection's items; without it the order is not guaranteed. `HasOne` requires the foreign key to be unique in the target table; several matches are a data error. A limit per parent, lazy loading, cross-connection relations and automatic cascades are not part of 1.1.
 
 Relations that were not loaded stay as the hydrator left them. A loaded to-one without a visible target is assigned as NULL. One PHP instance per row across queries is not guaranteed.
 
@@ -366,7 +368,7 @@ This is not a server-side cursor and not a snapshot under concurrent changes. Fo
 
 The verified matrix is PostgreSQL 17 (`pdo_pgsql`), MySQL 8.4 and MariaDB 12.3 (`pdo_mysql`) and SQLite (`pdo_sqlite`). CI checks the minimum DBAL 4.3 branch and the latest compatible release. MariaDB is handled as MySQL; SQL Server and other platforms are not declared compatible just because DBAL has a driver for them, and compatibility with older server versions is not claimed.
 
-The SQL builder, quoting, parameters, types and transactions are delegated to DBAL. Narrow operations without a suitable common API check the platform explicitly: generated IDs and upserts. There is no "treat everything unknown as PostgreSQL" branch and no general INSERT IGNORE that would hide unrelated constraint violations.
+The SQL builder, quoting, parameters, types and transactions are delegated to DBAL. Narrow operations without a suitable common API check the platform explicitly: generated IDs, upserts and the LIKE escape character. There is no "treat everything unknown as PostgreSQL" branch and no general INSERT IGNORE that would hide unrelated constraint violations.
 
 Errors in mapping definitions and unsupported query parameters are detected before SQL as far as possible; lazy relations are checked when first resolved. DBAL execution errors keep their cause. Invalid results of a hydrator or `assign` are contract errors, not skipped models.
 

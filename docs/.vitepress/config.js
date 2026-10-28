@@ -22,12 +22,12 @@ export default defineConfig({
       { text: 'Guide', link: '/guide/' },
       { text: 'API', link: '/guide/api' },
       { text: 'Details', link: '/guide/details' },
-      { text: 'v1.0.0', link: 'https://github.com/SoloPHP/Repository/releases' },
+      { text: 'v1.1.0', link: 'https://github.com/SoloPHP/Repository/releases' },
     ],
 
     sidebar: [
       {
-        text: 'Solo Repository · 1.0',
+        text: 'Solo Repository · 1.1',
         items: [
           { text: 'Getting started', link: '/guide/' },
           { text: 'API reference', link: '/guide/api' },

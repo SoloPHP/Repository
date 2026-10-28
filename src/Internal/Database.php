@@ -281,6 +281,23 @@ final class Database
         ];
     }
 
+    /**
+     * The clause after a LIKE pattern that makes "\" its escape character. PostgreSQL always
+     * escapes with "\" and gets none, as an ESCAPE literal would also stop it matching bytea.
+     * SQLite and standard SQL have no default escape, and MySQL has none under
+     * NO_BACKSLASH_ESCAPES, a mode that also reads '\\' as two characters, so MySQL names the
+     * character in hex. Literals, unlike a bound parameter, let MySQL and SQLite plan a pattern
+     * with a fixed prefix as an index range.
+     */
+    public function likeEscape(): string
+    {
+        return match ($this->dialect()) {
+            Dialect::PostgreSQL => '',
+            Dialect::MySQL => " ESCAPE X'5C'",
+            Dialect::SQLite, null => " ESCAPE '\\'",
+        };
+    }
+
     public function quote(string $identifier): string
     {
         return $this->platform()->quoteSingleIdentifier($identifier);

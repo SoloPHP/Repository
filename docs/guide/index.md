@@ -54,6 +54,7 @@ and `findOneBy`; updates do not throw solely because no record matched.
 
 ```php
 use Solo\Repository\Filter;
+use Solo\Repository\Like;
 
 $query = $products->read();
 $page = $query->findBy(
@@ -62,6 +63,7 @@ $page = $query->findBy(
     limit: 20,
     offset: 40,
 );
+$found = $query->findBy(['sku LIKE' => Like::contains($search)], ['sku' => 'ASC'], limit: 20);
 $rows = $query->rows(['id', 'sku'], orderBy: ['id' => 'ASC']);
 
 foreach ($query->iterateById(batchSize: 500) as $product) {
@@ -72,6 +74,9 @@ foreach ($query->iterateById(batchSize: 500) as $product) {
 The last pagination argument is a row **offset**, not a page number. Use an
 explicit order with a unique final key for stable pages. `iterateById` supports
 integer primary keys and does not provide a snapshot across concurrent changes.
+`Like::contains()`, `startsWith()` and `endsWith()` turn a search term into a
+LIKE pattern that matches it literally, so a `%` or `_` in the term stays a
+character on every database.
 
 ## Add translations and relations
 

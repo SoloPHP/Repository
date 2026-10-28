@@ -128,6 +128,26 @@ final class DatabaseTest extends TestCase
         self::assertSame('"br_base"."select"', $database->qualified('br_base', 'select'));
     }
 
+    /** @return iterable<string, array{AbstractPlatform, string}> */
+    public static function likeEscapes(): iterable
+    {
+        // A hex literal reads as one backslash whether or not MySQL runs with NO_BACKSLASH_ESCAPES.
+        yield 'MySQL' => [new MySQLPlatform(), " ESCAPE X'5C'"];
+        yield 'MariaDB' => [new MariaDBPlatform(), " ESCAPE X'5C'"];
+        // The backslash is PostgreSQL's fixed default, and an ESCAPE literal would break bytea patterns.
+        yield 'PostgreSQL' => [new PostgreSQLPlatform(), ''];
+        yield 'SQLite' => [new SQLitePlatform(), " ESCAPE '\\'"];
+        yield 'unsupported platform' => [new SQLServerPlatform(), " ESCAPE '\\'"];
+    }
+
+    #[DataProvider('likeEscapes')]
+    public function testLikePatternsEscapeWithABackslashOnEveryPlatform(
+        AbstractPlatform $platform,
+        string $clause,
+    ): void {
+        self::assertSame($clause, (new Database($this->connection($platform)))->likeEscape());
+    }
+
     public function testReadsAndWritesUseNoDeprecatedDbalApi(): void
     {
         $connection = DriverManager::getConnection(['driver' => 'pdo_sqlite', 'memory' => true]);

@@ -9,11 +9,13 @@ use DateTimeZone;
 use Doctrine\DBAL\Exception\DeadlockException;
 use Doctrine\DBAL\Exception\DriverException;
 use Doctrine\DBAL\Exception\UniqueConstraintViolationException;
+use Doctrine\DBAL\Platforms\AbstractMySQLPlatform;
 use Doctrine\DBAL\Platforms\MariaDBPlatform;
 use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
 use Doctrine\DBAL\Schema\Schema;
 use Doctrine\DBAL\TransactionIsolationLevel;
 use Doctrine\DBAL\Types\Types;
+use Solo\Repository\Like;
 use Solo\Repository\Mapping;
 use Solo\Repository\Repository;
 use Solo\Repository\Visibility;
@@ -125,6 +127,79 @@ final class RepositoryDatabaseTest extends DatabaseTestCase
         self::assertSame(['a', 'c'], $skus(['occurred_at IN' => [$dates[0], $dates[2]]]));
         self::assertSame(['b'], $skus(['amount IN' => ['2.00', '9.99']]));
         self::assertSame(['a', 'c'], $skus(['sku NOT IN' => ['b', 'z'], 'active IN' => [true]]));
+    }
+
+    public function testLikePatternsEscapeWithABackslashOnTheServer(): void
+    {
+        $schema = new Schema();
+        $patterns = $schema->createTable('repo_repository_patterns');
+        $patterns->addColumn('id', Types::INTEGER, ['autoincrement' => true]);
+        $patterns->setPrimaryKey(['id']);
+        $patterns->addColumn('code', Types::STRING, ['length' => 20]);
+        // A single-byte character set on MySQL and MariaDB; PostgreSQL ignores the option.
+        $patterns->addColumn('latin', Types::STRING, ['length' => 20, 'platformOptions' => ['charset' => 'latin1']]);
+        $this->createSchema($schema);
+        $repository = new Repository($this->connection, new Mapping(
+            table: 'repo_repository_patterns',
+            columns: ['id' => Types::INTEGER, 'code' => Types::STRING, 'latin' => Types::STRING],
+            hydrate: static fn(array $row): object => (object) $row,
+        ));
+        $repository->insertMany(array_map(
+            static fn (string $value): array => ['code' => $value, 'latin' => $value],
+            ['50%', '50x', 'a_b', 'axb', 'C:\\dir', 'C:dir', 'end\\'],
+        ));
+        $read = $repository->read();
+        $assertMatches = static function () use ($read): void {
+            foreach (['code', 'latin'] as $field) {
+                $values = static fn (string $operator, string $pattern): array => array_column(
+                    $read->rows([$field], [$field . ' ' . $operator => $pattern], ['id' => 'ASC']),
+                    $field,
+                );
+                self::assertSame(['50%', '50x'], $values('LIKE', '50%'));
+                self::assertSame(['50%'], $values('LIKE', Like::startsWith('50%')));
+                self::assertSame(['a_b'], $values('LIKE', Like::escape('a_b')));
+                self::assertSame(['C:\\dir'], $values('LIKE', 'C:\\\\dir'));
+                self::assertSame(['C:dir'], $values('LIKE', 'C:\\dir'));
+                self::assertSame(['C:\\dir', 'end\\'], $values('LIKE', Like::contains('\\')));
+                self::assertSame(['end\\'], $values('LIKE', Like::endsWith('\\')));
+                self::assertSame(['50%', '50x', 'a_b', 'axb', 'C:dir'], $values('NOT LIKE', Like::contains('\\')));
+            }
+        };
+
+        $assertMatches();
+        if ($this->connection->getDatabasePlatform() instanceof AbstractMySQLPlatform) {
+            // In this mode MySQL has no default LIKE escape, MariaDB none for single-byte character
+            // sets, and both read the string '\\' as two characters.
+            $mode = $this->connection->fetchOne('SELECT @@SESSION.sql_mode');
+            $this->connection->executeStatement(
+                "SET SESSION sql_mode = CONCAT(@@SESSION.sql_mode, ',NO_BACKSLASH_ESCAPES')",
+            );
+            try {
+                $assertMatches();
+            } finally {
+                $this->connection->executeStatement('SET SESSION sql_mode = ?', [$mode]);
+            }
+        }
+    }
+
+    public function testLikeMatchesBinaryFieldsOnTheServer(): void
+    {
+        $schema = new Schema();
+        $files = $schema->createTable('repo_repository_files');
+        $files->addColumn('id', Types::INTEGER, ['autoincrement' => true]);
+        $files->setPrimaryKey(['id']);
+        $files->addColumn('payload', Types::BINARY, ['length' => 20]);
+        $this->createSchema($schema);
+        $repository = new Repository($this->connection, new Mapping(
+            table: 'repo_repository_files',
+            columns: ['id' => Types::INTEGER, 'payload' => Types::BINARY],
+            hydrate: static fn(array $row): object => (object) $row,
+        ));
+        $repository->insertMany([['payload' => '50%'], ['payload' => '50x']]);
+
+        // PostgreSQL escapes with "\" without an ESCAPE clause, which would make it compare bytea with text.
+        self::assertSame(2, $repository->read()->count(['payload LIKE' => '50%']));
+        self::assertSame(1, $repository->read()->count(['payload LIKE' => Like::startsWith('50%')]));
     }
 
     public function testSoftDeleteVisibilityRestorePurgeAndFilteredKeyset(): void

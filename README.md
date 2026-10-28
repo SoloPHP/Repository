@@ -54,6 +54,7 @@ $page = $products->read()->findBy(['price >=' => '50.00'], ['price' => 'ASC', 'i
 - [Mapping and Types](https://solophp.github.io/Repository/guide/api#mapping-and-types)
 - [Read Queries](https://solophp.github.io/Repository/guide/api#repository-and-read-queries)
 - [Criteria and Filter](https://solophp.github.io/Repository/guide/api#criteria-and-filter)
+- [LIKE Patterns](https://solophp.github.io/Repository/guide/api#like-patterns)
 - [Translations](https://solophp.github.io/Repository/guide/api#translation-metadata-and-locale)
 - [Relations](https://solophp.github.io/Repository/guide/api#relations-and-load)
 - [Writes](https://solophp.github.io/Repository/guide/api#repository-writes)

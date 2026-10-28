@@ -13,6 +13,7 @@ use Solo\Repository\Internal\Predicate\Exists;
 use Solo\Repository\Internal\Predicate\Group;
 use Solo\Repository\Mapping;
 use Solo\Repository\Relations\BelongsToMany;
+use Stringable;
 
 /**
  * Validates every branch, folds constants, and only then renders SQL and bound parameters.
@@ -174,6 +175,29 @@ final class PredicateCompiler
         }
 
         FieldValue::assert($field, $type, $value);
+        if (self::isLike($operator) && self::endsInEscape($value)) {
+            throw new InvalidArgumentException(sprintf(
+                'The LIKE pattern of field "%s" ends in an unpaired escape character "\\"; '
+                . 'write "\\\\" for a literal backslash.',
+                $field,
+            ));
+        }
+    }
+
+    private static function isLike(string $operator): bool
+    {
+        return $operator === 'LIKE' || $operator === 'NOT LIKE';
+    }
+
+    /** A final "\" with nothing to escape: PostgreSQL rejects it, MySQL matches it, SQLite matches nothing. */
+    private static function endsInEscape(mixed $value): bool
+    {
+        if (!is_string($value) && !$value instanceof Stringable) {
+            return false;
+        }
+        $pattern = (string) $value;
+
+        return (strlen($pattern) - strlen(rtrim($pattern, '\\'))) % 2 === 1;
     }
 
     private static function countValues(Condition|Group|Exists $predicate): int
@@ -214,7 +238,9 @@ final class PredicateCompiler
         }
 
         if (!is_array($predicate->value)) {
-            return $field . ' ' . $predicate->operator . ' ' . $this->bind($predicate->value, $predicate->type);
+            $sql = $field . ' ' . $predicate->operator . ' ' . $this->bind($predicate->value, $predicate->type);
+
+            return self::isLike($predicate->operator) ? $sql . $this->db->likeEscape() : $sql;
         }
 
         $list = $this->db->listParameter($predicate->type, array_values($predicate->value));
