@@ -21,7 +21,7 @@ jobs:
           - php: '8.5'
             dbal: '^4.3'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php }}
@@ -85,7 +85,7 @@ jobs:
     env:
       REPOSITORY_DATABASE_URL: ${{ matrix.database.url }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.runtime.php }}
