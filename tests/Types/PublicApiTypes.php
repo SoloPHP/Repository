@@ -15,6 +15,7 @@ use Solo\Repository\Relations\BelongsToMany;
 use Solo\Repository\Relations\HasMany;
 use Solo\Repository\Relations\HasOne;
 use Solo\Repository\Repository;
+use Solo\Repository\TransactionManager;
 use Solo\Repository\Visibility;
 
 use function PHPStan\Testing\assertType;
@@ -61,6 +62,17 @@ function categoryMapping(): Mapping
 /** @param Repository<object> $repository */
 function acceptsAnyRepository(Repository $repository): void
 {
+}
+
+/** @param Repository<Product> $products */
+function transactionResultsKeepTheirTypes(TransactionManager $transactions, Repository $products): void
+{
+    assertType('Solo\Repository\Tests\Types\Product', $transactions->run(static fn (): Product => new Product()));
+    assertType('Solo\Repository\Tests\Types\Product|null', $transactions->run(static fn () => $products->read()->find(1)));
+    assertType('int', $transactions->run(static fn (): int => $products->update(1, ['category_id' => 2])));
+    $transactions->run(static function () use ($products): void {
+        $products->insert(['id' => 1]);
+    });
 }
 
 function relationsAcceptTypedAssignCallbacks(Connection $connection): void

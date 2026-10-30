@@ -81,7 +81,7 @@ MySQL 8.4, MariaDB 12.3 and PostgreSQL 17 are the verified server platforms. Mar
 | Relations | Explicit definitions and assign functions; batch loading instead of queries from objects |
 | Complex SQL | A real DBAL `QueryBuilder`: `ReadQuery::queryBuilder()` with the mapping's criteria, or the application's own `Connection` |
 
-Not part of 1.1: unit of work, identity map, lazy proxies, dirty tracking, cascading graph saves, schema generation, query cache, event bus, advisory locks, a container of its own and separate Composer packages. The application defines business operations, transactions across several repositories and retry rules.
+Not part of 1.2: unit of work, identity map, lazy proxies, dirty tracking, cascading graph saves, schema generation, query cache, event bus, advisory locks, a container of its own and separate Composer packages. The application defines business operations, transactions across several repositories and retry rules.
 
 ## Structure
 
@@ -121,7 +121,7 @@ The package has no SQL AST of its own, no dialect engine and no public `select/f
 
 One `int|string` primary key is supported, or none. `primaryKey: null` describes a table without a single-column key, for example with a composite key: its rows are read, inserted and changed by criteria (`findBy`, `rows`, `count`, aggregates, `queryBuilder`, `insert`, `insertMany`, `updateBy`, `deleteBy`, `purgeBy`). Operations by ID (`find`, `insertGetId`, `update`, `delete`, `restore`, `purge`, `lockForUpdate`) throw `LogicException`, and `iterateById` throws `InvalidArgumentException`, all before SQL. Such a table has no generated ID, and an inserted row has at least one column.
 
-Without a primary key there are no translations, and the only possible relation is `BelongsTo`: `HasOne`, `HasMany` and `BelongsToMany` find their owner by its key. `HasOne` and `HasMany` can load such a table, but `BelongsTo` and `BelongsToMany` cannot, since they reference the target's key. `Filter::related` through its `BelongsTo` works with any key type, while loading needs an integer target key: string keys are compared in SQL by the database collation, through the owner's primary key. Addressing a row by a composite key and relations over alternative unique keys are outside 1.1. The hydrator gets every declared base and translated column, not `SELECT *`.
+Without a primary key there are no translations, and the only possible relation is `BelongsTo`: `HasOne`, `HasMany` and `BelongsToMany` find their owner by its key. `HasOne` and `HasMany` can load such a table, but `BelongsTo` and `BelongsToMany` cannot, since they reference the target's key. `Filter::related` through its `BelongsTo` works with any key type, while loading needs an integer target key: string keys are compared in SQL by the database collation, through the owner's primary key. Addressing a row by a composite key and relations over alternative unique keys are outside 1.2. The hydrator gets every declared base and translated column, not `SELECT *`.
 
 A given primary key must be part of `columns`; a relation's foreign key is part of the `columns` of its side. `generatedId: true` is allowed only for a compatible integer primary key. A mapping is validated at once; the requirements on a lazy target side are checked when the relation is first resolved.
 
@@ -246,7 +246,7 @@ Fallback is thus `COALESCE(primary.field, fallback.field)`, chosen independently
 
 One `FieldResolver` serves the projection, WHERE, ORDER BY and conditions inside relations. A filter on `name` checks exactly the value with fallback that will be shown.
 
-The effective language pair of the root read is inherited by relations and relation predicates. When the root has neither `withLocale()` nor `defaultLocale`, in each branch the first translated entity with a `defaultLocale` applies it, and it is inherited from there; translated entities above it read NULL in their translated fields. For one language across the whole graph, set `withLocale()` on the root, even if the root itself is not translated. A per-load language override is not part of 1.1.
+The effective language pair of the root read is inherited by relations and relation predicates. When the root has neither `withLocale()` nor `defaultLocale`, in each branch the first translated entity with a `defaultLocale` applies it, and it is inherited from there; translated entities above it read NULL in their translated fields. For one language across the whole graph, set `withLocale()` on the root, even if the root itself is not translated. A per-load language override is not part of 1.2.
 
 When a model is read from a translated repository with `defaultLocale`, that language means a JOIN by default. `rows`, `count` and `exists` add a translation JOIN only when their fields or filters need it. Unlocalized physical rows can be read directly through DBAL; there is no separate `withoutLocale()`.
 
@@ -295,7 +295,7 @@ Integer keys are compared by value: a `BelongsTo` target is selected by the uniq
 
 The batch unit of many-to-many is the owners. The target SELECT is limited by an EXISTS over the pivot and the batch of owner IDs, not by a list of all target IDs. All targets of one owner are sorted in one SQL query; the loader walks that result in database order and distributes it through the pivot. Concatenating independently sorted target chunks, or sorting in PHP instead of by the database collation, is not used.
 
-Owners are selected and limited before collections are loaded. Results are matched by typed row keys. A non-empty `Load.orderBy` sets the order of each collection's items; without it the order is not guaranteed. `HasOne` requires the foreign key to be unique in the target table; several matches are a data error. A limit per parent, lazy loading, cross-connection relations and automatic cascades are not part of 1.1.
+Owners are selected and limited before collections are loaded. Results are matched by typed row keys. A non-empty `Load.orderBy` sets the order of each collection's items; without it the order is not guaranteed. `HasOne` requires the foreign key to be unique in the target table; several matches are a data error. A limit per parent, lazy loading, cross-connection relations and automatic cascades are not part of 1.2.
 
 Relations that were not loaded stay as the hydrator left them. A loaded to-one without a visible target is assigned as NULL. One PHP instance per row across queries is not guaranteed.
 
@@ -348,7 +348,7 @@ An empty criterion, or one that simple rules fold to true, is rejected for bulk 
 
 `lockForUpdate(ids)` locks the physical rows with these primary keys until the end of the current transaction with `SELECT ... FOR UPDATE`; outside a transaction the call is rejected. IDs are normalized and deduplicated, and rows are locked in key order, so competing transactions do not deadlock each other. Large sets are split into statements of 5,000 keys; integer keys are sorted before splitting, so the order holds across statements, while string keys follow the database collation within each statement. SQLite has no row locks and runs a plain SELECT. Cross-process advisory locks ("one critical section per order") stay in the application.
 
-Several operations are combined with DBAL's standard `$db->transactional(...)` on the shared connection. A single CRUD call, an upsert and an `insertMany` that fits one statement open no extra transaction. An `insertMany` split into several statements and `LinkSet` operations use a DBAL transaction or nested savepoint and propagate errors. There are no automatic retries.
+Several operations are combined with DBAL's standard `$db->transactional(...)` on the shared connection. A single CRUD call, an upsert and an `insertMany` that fits one statement open no extra transaction. An `insertMany` split into several statements and `LinkSet` operations use a DBAL transaction or nested savepoint and propagate errors. There are no automatic retries. An application service that must not receive the connection takes the same boundary through `TransactionManager::run()` on the shared connection.
 
 `LinkSet` provides `attach(id, ids): void`, `detach(id, ids): void` and `sync(id, ids): void`. Input IDs are normalized by the type of the target's primary key and deduplicated; their order is not kept. Attaching an existing link and detaching a missing one are no-ops; `sync` sets the exact set, and `sync(id, [])` clears it. Attaching or detaching an empty list does nothing.
 

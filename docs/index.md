@@ -34,7 +34,7 @@ features:
     details: Load four relation types and nested paths in batches. Assign related objects to mutable or immutable models without lazy proxies.
   - icon: 🛠️
     title: SQL when you need it
-    details: Use the application's Connection for aggregates, custom SQL, locks, and transaction boundaries. Schema and migrations remain explicit.
+    details: Use the application's Connection for aggregates, custom SQL, and locks; take transaction boundaries through TransactionManager or DBAL. Schema and migrations remain explicit.
 ---
 
 <style>

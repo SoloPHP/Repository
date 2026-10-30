@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.0 — 2026-10-30
+
+### Features
+
+- `TransactionManager::run()` provides transaction boundaries without exposing a
+  SQL connection to services. It shares an application-owned DBAL connection with
+  repositories, preserves callback result types, and delegates nested savepoints
+  and rollback to DBAL without automatic retries or after-commit callbacks.
+
 ## 1.1.0 — 2026-10-28
 
 ### Fixes

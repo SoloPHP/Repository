@@ -45,6 +45,12 @@ $page = $products->read()->findBy(['price >=' => '50.00'], ['price' => 'ASC', 'i
 
 `hydrate` receives values already converted by their DBAL types and may build an immutable model of your own. The columns of the mapping are the only fields a read or a write accepts.
 
+For an operation spanning repositories on the same connection, inject a
+`Solo\Repository\TransactionManager` constructed with that connection and call
+`run()`. Services choose the operation's boundary without receiving SQL access;
+DBAL handles commit, rollback and nested savepoints. See
+[Transactions and DBAL](https://solophp.github.io/Repository/guide/api#transactions-and-the-dbal-escape-hatch).
+
 ## Documentation
 
 **[Full Documentation](https://solophp.github.io/Repository/)**

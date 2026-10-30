@@ -1,8 +1,8 @@
 # Public API reference
 
-This reference describes Solo Repository 1.1: PHP 8.3+, Doctrine DBAL `^4.3`, and the `Solo\Repository` namespace. Relation definitions live in `Solo\Repository\Relations`. See the [design and integration guide](details.md) and `examples/definitions.php` in the source checkout.
+This reference describes Solo Repository 1.2: PHP 8.3+, Doctrine DBAL `^4.3`, and the `Solo\Repository` namespace. Relation definitions live in `Solo\Repository\Relations`. See the [design and integration guide](details.md) and `examples/definitions.php` in the source checkout.
 
-`Repository<T>`, `Mapping<T>` and `ReadQuery<T>` use PHPDoc generics, where `T` is an object. `T` is covariant, so `Repository<Product>` is accepted where `Repository<object>` is expected. Relation definitions are generic over their owner and target models, so static analysis checks every `assign` callback against the target mapping. The runtime checks that hydration and relation assignment return objects; it does not enforce their concrete class. `Mapping`, `ReadQuery`, the configuration objects and the write helpers are `final readonly`; `Repository` is `readonly` and may be extended into a [typed repository](#typed-repositories). Readonly configuration does not make the shared DBAL connection, returned models or objects captured by callbacks immutable.
+`Repository<T>`, `Mapping<T>` and `ReadQuery<T>` use PHPDoc generics, where `T` is an object. `T` is covariant, so `Repository<Product>` is accepted where `Repository<object>` is expected. Relation definitions are generic over their owner and target models, so static analysis checks every `assign` callback against the target mapping. The runtime checks that hydration and relation assignment return objects; it does not enforce their concrete class. `Mapping`, `ReadQuery`, `TransactionManager`, the configuration objects and the write helpers are `final readonly`; `Repository` is `readonly` and may be extended into a [typed repository](#typed-repositories). Readonly configuration does not make the shared DBAL connection, returned models or objects captured by callbacks immutable.
 
 The public API consists of the types and methods documented below. The `Internal` namespace and members marked `@internal` are implementation details without a semantic-versioning compatibility promise: the constructors of `ReadQuery`, `LinkSet` and `TranslationStore` (obtain them from a `Repository`), the properties of `Filter`, and `Relations\Relation::resolve()`. The abstract `Relation` base is not an extension point: use the four supplied final definitions. `Repository` may be extended under the compatibility rules of [typed repositories](#typed-repositories).
 
@@ -467,17 +467,28 @@ All nonempty attach/detach operations and every sync use a transaction/savepoint
 
 ## Transactions and the DBAL escape hatch
 
-Keep the application's `Connection` available. Use it for transaction boundaries spanning repositories, translation stores and link sets. This example assumes translations and a `tags` many-to-many relation are configured:
+Use `TransactionManager` to give a service transaction boundaries without giving it a SQL connection. Construct the manager and all participating repositories with the **same `Connection` instance**. The application chooses the connection and the boundary of the operation; the manager delegates commit, rollback and nested savepoints to DBAL. This example assumes translations and a `tags` many-to-many relation are configured:
 
 ```php
-$db->transactional(static function () use ($products, $id): void {
+use Solo\Repository\TransactionManager;
+
+$transactions = new TransactionManager($db); // $products also uses $db
+$transactions->run(static function () use ($products, $id): void {
     $products->update($id, ['sku' => 'TABLE-02']);
     $products->translations()->save($id, 'uk', ['name' => 'Стіл']);
     $products->links('tags')->sync($id, [2, 5]);
 });
 ```
 
-Single CRUD statements, upserts, translation upserts and an `insertMany()` that fits one statement do not add transactions. Composite operations use DBAL transactions, including nested savepoints in an outer transaction. The package does not close the application connection.
+`run(Closure $operation): mixed` takes a `Closure(): T`, invokes it once with no arguments, and returns the callback's result as `T` after DBAL commits or releases the savepoint. A thrown exception or error goes through DBAL's rollback handling. Construction opens no connection, and the manager does not close the application connection. There are no automatic retries, after-commit callbacks or distributed transactions.
+
+Single CRUD statements, upserts, translation upserts and an `insertMany()` that fits one statement do not add transactions. Composite operations use DBAL transactions, including nested savepoints in an outer transaction. They participate in `run()` on the same connection, and `run()` can also be nested inside an existing DBAL transaction. Successful nested calls do **not** commit the outer transaction; catching an inner failure lets the outer operation continue after rollback to the savepoint.
+
+Repositories on another connection do not participate, even if they address the same database. Bind separate managers for separate database contexts and keep their lifetime aligned with their repositories, especially in workers that switch tenants. The manager does not inspect the repositories captured by a callback or detect mismatched connections.
+
+The application owns external effects: a database rollback cannot undo an email, HTTP request or file deletion. Schedule such work after the successful **outermost** commit, or use an outbox written in the same transaction. Do not treat the return from a nested `run()` as an after-commit hook, and do not manually commit, roll back or use raw PDO transaction control inside the callback.
+
+Direct `Connection::transactional()` remains supported in persistence code that already needs DBAL. `TransactionManager` is an optional facade over the same mechanism, not a second transaction implementation.
 
 For joins, aggregates over several tables, advisory locks, raw projections, special types or other SQL features, use DBAL. To keep a mapping's criteria in such SQL, start from `ReadQuery::queryBuilder()`:
 
