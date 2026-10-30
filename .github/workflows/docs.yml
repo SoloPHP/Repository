@@ -27,7 +27,7 @@ jobs:
         working-directory: docs
       - run: npm run build
         working-directory: docs
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && github.repository == 'SoloPHP/Repository'
         with:
           path: docs/.vitepress/dist
@@ -41,11 +41,17 @@ jobs:
       id-token: write
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: ${{ steps.deployment.outputs.page_url || steps.retry.outputs.page_url }}
     concurrency:
       group: pages
       cancel-in-progress: false
     steps:
-      - uses: actions/configure-pages@v4
-      - uses: actions/deploy-pages@v4
+      - uses: actions/configure-pages@v6
+      # The Pages backend occasionally answers "Deployment failed, try again later";
+      # a second identical attempt is enough to get past that.
+      - uses: actions/deploy-pages@v5
         id: deployment
+        continue-on-error: true
+      - uses: actions/deploy-pages@v5
+        id: retry
+        if: steps.deployment.outcome == 'failure'
