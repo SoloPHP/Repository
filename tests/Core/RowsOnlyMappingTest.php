@@ -16,6 +16,7 @@ use PHPUnit\Framework\TestCase;
 use Psr\Log\AbstractLogger;
 use Solo\Repository\Filter;
 use Solo\Repository\Mapping;
+use Solo\Repository\PageRequest;
 use Solo\Repository\Relations\HasMany;
 use Solo\Repository\Repository;
 use Stringable;
@@ -158,6 +159,12 @@ final class RowsOnlyMappingTest extends TestCase
         ];
         yield 'keyset iteration' => [
             static fn (Repository $rows): mixed => $rows->read()->iterateById(),
+            $links,
+            'Reading entities',
+        ];
+        // With an order: the links have no primary key, and a page of them needs one.
+        yield 'a page' => [
+            static fn (Repository $rows): mixed => $rows->read()->page(new PageRequest(1, 10, ['product_id' => 'ASC'])),
             $links,
             'Reading entities',
         ];

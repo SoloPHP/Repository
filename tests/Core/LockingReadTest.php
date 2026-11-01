@@ -18,6 +18,8 @@ use LogicException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Solo\Repository\Mapping;
+use Solo\Repository\Page;
+use Solo\Repository\PageRequest;
 use Solo\Repository\ReadQuery;
 use Solo\Repository\Relations\BelongsTo;
 use Solo\Repository\Repository;
@@ -133,6 +135,10 @@ final class LockingReadTest extends TestCase
         yield 'min' => [static fn(ReadQuery $read): mixed => $read->min('amount'), 'Aggregates do not lock rows'];
         yield 'max' => [static fn(ReadQuery $read): mixed => $read->max('amount'), 'Aggregates do not lock rows'];
         yield 'avg' => [static fn(ReadQuery $read): ?float => $read->avg('amount'), 'Aggregates do not lock rows'];
+        yield 'page' => [
+            static fn(ReadQuery $read): Page => $read->page(new PageRequest(1, 10)),
+            'Pages do not lock rows',
+        ];
         yield 'queryBuilder' => [
             static fn(ReadQuery $read): QueryBuilder => $read->queryBuilder('i'),
             'Query builders do not lock rows',

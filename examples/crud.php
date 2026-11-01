@@ -9,6 +9,7 @@ use Doctrine\DBAL\DriverManager;
 use Doctrine\DBAL\Types\Types;
 use Solo\Repository\Filter;
 use Solo\Repository\Mapping;
+use Solo\Repository\PageRequest;
 use Solo\Repository\Repository;
 use Solo\Repository\Visibility;
 
@@ -61,4 +62,8 @@ foreach ($export as $item) {
 
 $items->restore($chair->id);
 echo json_encode($active->rows(['id', 'sku'], orderBy: ['id' => 'ASC']), JSON_THROW_ON_ERROR) . PHP_EOL;
+
+$cheapest = $active->page(new PageRequest(page: 1, perPage: 2, orderBy: ['price' => 'ASC']));
+echo 'Cheapest ' . count($cheapest->items) . ' of ' . $cheapest->total . ': '
+    . implode(', ', array_column($cheapest->items, 'sku')) . PHP_EOL;
 $db->close();

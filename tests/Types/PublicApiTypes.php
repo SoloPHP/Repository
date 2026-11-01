@@ -10,6 +10,8 @@ namespace Solo\Repository\Tests\Types;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\Types\Types;
 use Solo\Repository\Mapping;
+use Solo\Repository\Page;
+use Solo\Repository\PageRequest;
 use Solo\Repository\Relations\BelongsTo;
 use Solo\Repository\Relations\BelongsToMany;
 use Solo\Repository\Relations\HasMany;
@@ -73,6 +75,20 @@ function transactionResultsKeepTheirTypes(TransactionManager $transactions, Repo
     $transactions->run(static function () use ($products): void {
         $products->insert(['id' => 1]);
     });
+}
+
+/**
+ * @param Repository<Product> $products
+ * @param list<string> $names
+ */
+function pagesKeepTheTypeOfTheirItems(Repository $products, array $names): void
+{
+    $page = $products->read()->page(new PageRequest(1, 20, ['id' => 'DESC']), ['category_id' => 2]);
+    assertType('Solo\Repository\Page<Solo\Repository\Tests\Types\Product>', $page);
+    assertType('list<Solo\Repository\Tests\Types\Product>', $page->items);
+    assertType('Solo\Repository\Page<int>', $page->map(static fn (Product $product): int => 1));
+    assertType('Solo\Repository\Page<string>', Page::of($names, new PageRequest(2, 20), static fn (): int => 21));
+    assertType("array<string, 'ASC'|'DESC'>", (new PageRequest(1, 20))->orderEndingWith('id'));
 }
 
 function relationsAcceptTypedAssignCallbacks(Connection $connection): void

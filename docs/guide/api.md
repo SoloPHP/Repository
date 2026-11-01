@@ -159,6 +159,7 @@ ReadQuery::findBy(
     ?int $limit = null,
     int $offset = 0,
 ): array;                                             // list<T>
+ReadQuery::page(PageRequest $request, array|Filter $criteria = []): Page;   // Page<T>
 ReadQuery::count(array|Filter $criteria = []): int;
 ReadQuery::exists(array|Filter $criteria = []): bool;
 ReadQuery::sum(string $field, array|Filter $criteria = []): mixed;
@@ -181,13 +182,13 @@ ReadQuery::queryBuilder(string $alias, array|Filter $criteria = []): QueryBuilde
 In `findBy()`, `findOneBy()` and `rows()`, an `orderBy` key may also be a dotted path through `BelongsTo` relations to a readable field of their target, such as `category.name` or `category.parent.name`. Each target on a path is LEFT JOINed once per statement on its primary key, over the rows that a load of the same relation path in the read sees: its active rows, unless the read loads that relation with another visibility. A list that shows soft-deleted categories through `with([new Load('category', visibility: Visibility::All)])` thus also orders by their names; only the load's visibility applies, not its criteria. A row whose reference is NULL, dangling or not visible orders as one with NULL there; where NULL sorts follows the database (first in ascending order on MySQL, MariaDB and SQLite, last on PostgreSQL). A translated target field is read in the query locale and fallback, which the target inherits as relation loads do. Paths through `HasOne`, `HasMany` or `BelongsToMany`, which could match several rows, are rejected before SQL. The default order of a to-many relation and the order of a `Load` take the same paths, resolved from the target.
 
 - `find()` and `findOneBy()` return NULL when no visible row matches. They limit the root SELECT to one row.
-- `findBy()` materializes the requested models and their includes. No automatic pagination count is performed.
+- `findBy()` materializes the requested models and their includes. No automatic pagination count is performed; [`page()`](#pages) reads a page with its total.
 - `rows()` returns only the selected, DBAL-converted fields and never calls the hydrator. It rejects nonempty includes; use `with([])` on that branch.
 - `count()` and `exists()` do not hydrate models or resolve/load includes. Relation predicates in their criteria still apply. `exists()` selects a constant with a one-row limit.
 - `sum()`, `min()`, `max()` and `avg()` aggregate one readable field, including a translated field under the query locale, over the rows `count()` would count. `sum()`, `min()` and `max()` convert the result through the field's DBAL type, so a decimal sum is an exact string and `max('created_at')` a `DateTimeImmutable`. `sum()` returns zero of that type when nothing matches; `min()`, `max()` and `avg()` return NULL. `avg()` returns a float. `sum()` and `avg()` require a smallint, integer, bigint, decimal, float or smallfloat field and reject other fields before SQL.
 - `queryBuilder()` returns a new DBAL `QueryBuilder` over the rows `count()` would count, for SQL the other methods cannot express; see [the DBAL escape hatch](#transactions-and-the-dbal-escape-hatch). It rejects nonempty includes.
-- `forUpdate()` returns the same read as a locking one: `find()`, `findOneBy()`, `findBy()`, `rows()`, `exists()` and every batch of `iterateById()` run `SELECT ... FOR UPDATE` and lock the rows they read until the surrounding transaction ends; outside a transaction they throw `LogicException`. Unlike a plain read in a REPEATABLE READ transaction, which answers from the transaction's snapshot, a locking read never returns an older version of a row: MySQL reads the latest committed row, while PostgreSQL and MariaDB (with `innodb_snapshot_isolation`, its default since 11.6) reject a row changed since the snapshot with a serialization failure, after which the transaction must start over. The lock covers rows of the read's own table: PostgreSQL and MySQL from 8.0.1, which is told by the server version, lock with `FOR UPDATE OF`, while MariaDB and MySQL 5.7, which lack it, also lock the translation and order rows the statement joins. Relation loads read without locks. Aggregates and `queryBuilder()` of a locking read throw `LogicException`. SQLite has no row locks and runs the plain SELECT. Rows lock in the order the database reads them; where transactions lock overlapping sets of rows, read them in key order or take `lockForUpdate()` first. MySQL and MariaDB lock every row they read to answer the statement, so with an order no index serves, such as a relation path, a limited locking read locks all matching rows, not just the page.
-- Without `orderBy`, ordering is unspecified. Add the primary key as a final tie-breaker for stable pages. Negative limit/offset values are rejected. `limit: 0` validates query settings and returns an empty list without executing the read.
+- `forUpdate()` returns the same read as a locking one: `find()`, `findOneBy()`, `findBy()`, `rows()`, `exists()` and every batch of `iterateById()` run `SELECT ... FOR UPDATE` and lock the rows they read until the surrounding transaction ends; outside a transaction they throw `LogicException`. Unlike a plain read in a REPEATABLE READ transaction, which answers from the transaction's snapshot, a locking read never returns an older version of a row: MySQL reads the latest committed row, while PostgreSQL and MariaDB (with `innodb_snapshot_isolation`, its default since 11.6) reject a row changed since the snapshot with a serialization failure, after which the transaction must start over. The lock covers rows of the read's own table: PostgreSQL and MySQL from 8.0.1, which is told by the server version, lock with `FOR UPDATE OF`, while MariaDB and MySQL 5.7, which lack it, also lock the translation and order rows the statement joins. Relation loads read without locks. Aggregates, `page()` and `queryBuilder()` of a locking read throw `LogicException`. SQLite has no row locks and runs the plain SELECT. Rows lock in the order the database reads them; where transactions lock overlapping sets of rows, read them in key order or take `lockForUpdate()` first. MySQL and MariaDB lock every row they read to answer the statement, so with an order no index serves, such as a relation path, a limited locking read locks all matching rows, not just the page.
+- Without `orderBy`, ordering is unspecified. Add the primary key as a final tie-breaker for stable pages, or read them with `page()`, which adds it. Negative limit/offset values are rejected. `limit: 0` validates query settings and returns an empty list without executing the read.
 
 ```php
 $page = $products->read()->findBy(
@@ -202,6 +203,39 @@ $rows = $products->read()->rows(['id', 'sku'], orderBy: ['id' => 'ASC']);
 `iterateById()` yields `T` in ascending primary-key order using bounded queries with `id > lastId`. It requires an integer-family PK and a positive batch size. Validation happens when the method is called; read SQL begins when iteration starts. Locale, visibility, filters and includes apply to every batch. Continuation uses database row keys, so models need not expose an ID property.
 
 This is neither a server cursor nor a snapshot. Use application transaction/isolation rules for a consistent export. Memory holds the current batch and its related records; a large relation collection can still be large. The library releases completed batches, but a consumer can retain objects itself. Arbitrary ordering, composite cursors and streaming raw projections require DBAL.
+
+### Pages
+
+```php
+PageRequest::__construct(int $page, int $perPage, array $orderBy = []);
+PageRequest::offset(): int;                           // rows on the pages before this one
+PageRequest::orderEndingWith(string $key): array;     // the order ended by $key
+
+Page::__construct(array $items, int $total, PageRequest $request);   // Page<T>, items list<T>
+Page::of(array $items, PageRequest $request, Closure $count): Page;  // Page<U>
+Page::map(callable $map): Page;                                       // Page<U>
+```
+
+A `PageRequest` names a page by its number, counted from 1, its size and the order that divides the rows into pages; `orderBy` takes the fields and relation paths of `findBy()`. Numbers and sizes below 1, a page whose offset would exceed `PHP_INT_MAX` and orders with malformed field names or directions are rejected when the request is constructed; fields the mapping does not know, when the page is read.
+
+`page()` reads one page of entities with `findBy()` and the number of matching rows on all pages:
+
+- The order is the request's, ended by the primary key in the direction of its last field (`orderEndingWith()`), so rows that tie on every requested field fall on the same pages on every read: `['created_at' => 'DESC']` reads `created_at DESC, id DESC`, and a request without an order reads in key order. An order that already names the key is read as requested. A mapping without a primary key is read in the request's order alone, which must then be unique; a request without an order is rejected for it before SQL. MySQL and MariaDB keep the primary key in every secondary index, so the appended key costs nothing there; on PostgreSQL an index on `(created_at, id)` rather than `(created_at)` alone keeps such pages index-ordered when many rows share a value.
+- The rows tell the total when they end before the page does, so a short page runs no count. A full page, or an empty one past the end, runs `count()` over the same criteria, visibility and locale. The two statements share no snapshot: a write between them can make the total disagree with the rows; where that matters, read the page in a transaction at REPEATABLE READ or above.
+- Visibility, locale and includes apply as in `findBy()`, and unknown fields and invalid criteria are rejected before SQL. A locking read throws `LogicException`, since the count would not lock what it counts.
+
+A page keeps the request it was read for in `$request`, so `$page->request->page` and `$page->request->perPage` describe its position. `Page::of()` builds the same result for rows read with the request's offset and size by other means, such as custom SQL, and calls `$count` on the same rule; such a read takes its order from `orderEndingWith()` with the name of its own key, so its ties fall the way `page()` breaks them. Pass the rows exactly as the read returned them: a row dropped afterwards shortens the page, which then reports a total below the real one. `map()` replaces the items, for example with what a response shows, and keeps the total and the request. A page rejects items that are not a list, more items than its size and a negative total.
+
+```php
+use Solo\Repository\PageRequest;
+
+$page = $products->read()->with(['category'])->page(
+    new PageRequest(page: 3, perPage: 20, orderBy: ['created_at' => 'DESC']),
+    ['price >=' => '50.00'],
+);
+$page->items;   // list<Product>, read by created_at DESC, id DESC
+$page->total;   // every matching product, counted only when the page cannot tell
+```
 
 ## Criteria and Filter
 
@@ -509,8 +543,8 @@ Everything the caller adds is plain DBAL: joined tables get no visibility or loc
 
 | Failure | Expected category |
 |---|---|
-| Invalid metadata, unknown fields, unsupported filters/options, a LIKE pattern ending in an unpaired `\`, invalid IDs or parameter budget | `InvalidArgumentException` |
-| Missing translation metadata, restore without soft deletion, unsupported generated-ID/upsert platform, locking read outside a transaction, aggregate or query builder of a locking read | `LogicException` |
+| Invalid metadata, unknown fields, unsupported filters/options, a LIKE pattern ending in an unpaired `\`, invalid IDs, page requests or pages, or parameter budget | `InvalidArgumentException` |
+| Missing translation metadata, restore without soft deletion, unsupported generated-ID/upsert platform, locking read outside a transaction, aggregate, page or query builder of a locking read | `LogicException` |
 | Non-object hydration/assignment result, invalid relation factory result, multiple HasOne matches, invalid generated-ID result | `UnexpectedValueException` |
 | SQL, FK, UNIQUE or DBAL type-conversion failure | Original DBAL/driver exception |
 | Application callback failure or incompatible PHP parameter/return declaration | Original exception or PHP `TypeError` |

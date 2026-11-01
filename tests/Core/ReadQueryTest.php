@@ -20,6 +20,7 @@ use Psr\Log\AbstractLogger;
 use RuntimeException;
 use Solo\Repository\Filter;
 use Solo\Repository\Mapping;
+use Solo\Repository\PageRequest;
 use Solo\Repository\ReadQuery;
 use Solo\Repository\Repository;
 use Solo\Repository\Visibility;
@@ -239,6 +240,9 @@ final class ReadQueryTest extends TestCase
             'negative offset' => ['findBy', [[], [], null, -1]],
             'unknown criteria with zero limit' => ['findBy', [['extra' => 1], [], 0]],
             'unknown sort with zero limit' => ['findBy', [[], ['extra' => 'ASC'], 0]],
+            'unknown page order' => ['page', [new PageRequest(1, 10, ['extra' => 'ASC'])]],
+            'unknown page criteria' => ['page', [new PageRequest(1, 10), ['extra' => 1]]],
+            'invalid page criteria value' => ['page', [new PageRequest(1, 10), ['id' => '1abc']]],
             'unknown projection with zero limit' => ['rows', [['extra'], [], [], 0]],
             'invalid ID' => ['find', ['not-an-integer']],
             'invalid batch size' => ['iterateById', [[], 0]],

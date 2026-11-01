@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.0 — 2026-11-01
+
+### Features
+
+- `ReadQuery::page()` reads one page of entities and the number of matching rows on
+  all pages as a `Page`, for a `PageRequest` of page number, size and order. The
+  primary key ends the order, so ties keep their pages, and the total is counted only
+  when the page cannot tell it. `Page::of()` applies the counting rule to custom SQL,
+  and `PageRequest::orderEndingWith()` the ordering rule. See
+  [Pages](https://solophp.github.io/Repository/guide/api#pages).
+
 ## 1.2.0 — 2026-10-30
 
 ### Features

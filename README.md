@@ -20,6 +20,7 @@ Requires PHP 8.3+, Doctrine DBAL ^4.3 and the PDO driver of your database. Teste
 use Doctrine\DBAL\DriverManager;
 use Doctrine\DBAL\Types\Types;
 use Solo\Repository\Mapping;
+use Solo\Repository\PageRequest;
 use Solo\Repository\Repository;
 
 $db = DriverManager::getConnection(['driver' => 'pdo_sqlite', 'memory' => true]);
@@ -40,7 +41,8 @@ $id = $products->insertGetId(['sku' => 'CHAIR', 'price' => '49.90']);
 $products->update($id, ['price' => '59.90']);
 
 $product = $products->read()->find($id);
-$page = $products->read()->findBy(['price >=' => '50.00'], ['price' => 'ASC', 'id' => 'ASC'], limit: 20);
+$page = $products->read()->page(new PageRequest(1, 20, ['price' => 'ASC']), ['price >=' => '50.00']);
+// $page->items, and $page->total of every matching product
 ```
 
 `hydrate` receives values already converted by their DBAL types and may build an immutable model of your own. The columns of the mapping are the only fields a read or a write accepts.
@@ -59,6 +61,7 @@ DBAL handles commit, rollback and nested savepoints. See
 - [Typed Repositories](https://solophp.github.io/Repository/guide/api#typed-repositories)
 - [Mapping and Types](https://solophp.github.io/Repository/guide/api#mapping-and-types)
 - [Read Queries](https://solophp.github.io/Repository/guide/api#repository-and-read-queries)
+- [Pages](https://solophp.github.io/Repository/guide/api#pages)
 - [Criteria and Filter](https://solophp.github.io/Repository/guide/api#criteria-and-filter)
 - [LIKE Patterns](https://solophp.github.io/Repository/guide/api#like-patterns)
 - [Translations](https://solophp.github.io/Repository/guide/api#translation-metadata-and-locale)

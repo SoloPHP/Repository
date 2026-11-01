@@ -141,6 +141,24 @@ final readonly class ReadQuery
         return array_map(static fn(Record $record): object => $record->entity, $records);
     }
 
+    /**
+     * One page of the matching entities and the number of them on all pages: read in the
+     * request's order ended by the primary key (PageRequest::orderEndingWith()), and counted by
+     * count() only when the rows cannot tell the total (Page::of()). A mapping without a primary
+     * key needs an order of its own, unique for stable pages. A locking read throws
+     * LogicException, since the count would not lock what it counts.
+     *
+     * @param array<string, mixed>|Filter $criteria
+     * @return Page<T>
+     */
+    public function page(PageRequest $request, array|Filter $criteria = []): Page
+    {
+        $this->assertUnlocked('Pages');
+        $items = $this->findBy($criteria, $this->pageOrder($request), $request->perPage, $request->offset());
+
+        return Page::of($items, $request, fn(): int => $this->count($criteria));
+    }
+
     /** @param array<string, mixed>|Filter $criteria */
     public function exists(array|Filter $criteria = []): bool
     {
@@ -332,6 +350,23 @@ final readonly class ReadQuery
             static fn(FieldResolver $fields): string => $function . '(' . $fields->expression($field) . ')',
             $criteria,
         );
+    }
+
+    /** @return array<string, 'ASC'|'DESC'> */
+    private function pageOrder(PageRequest $request): array
+    {
+        $key = $this->mapping->primaryKey;
+        if ($key !== null) {
+            return $request->orderEndingWith($key);
+        }
+        if ($request->orderBy === []) {
+            // Without an order the database picks one per statement, and pages overlap.
+            throw new InvalidArgumentException(
+                sprintf('Pages of mapping "%s" need an order: it has no primary key.', $this->mapping->table),
+            );
+        }
+
+        return $request->orderBy;
     }
 
     /**

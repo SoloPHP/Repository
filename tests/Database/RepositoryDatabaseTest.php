@@ -17,6 +17,7 @@ use Doctrine\DBAL\TransactionIsolationLevel;
 use Doctrine\DBAL\Types\Types;
 use Solo\Repository\Like;
 use Solo\Repository\Mapping;
+use Solo\Repository\PageRequest;
 use Solo\Repository\Repository;
 use Solo\Repository\Visibility;
 
@@ -410,6 +411,30 @@ final class RepositoryDatabaseTest extends DatabaseTestCase
         self::assertSame('0', $query->sum('amount', ['sku' => 'missing']));
         self::assertNull($query->max('occurred_at', ['sku' => 'missing']));
         self::assertNull($query->avg('amount', ['sku' => 'missing']));
+    }
+
+    public function testPagesBreakTiesByTheKeyAndCountOnTheServer(): void
+    {
+        $repository = new Repository($this->connection, $this->mapping(true));
+        $tied = new DateTimeImmutable('2026-01-02 03:04:05');
+        // One statement each, so the generated keys follow the order of the rows.
+        foreach (['a', 'b', 'c', 'd'] as $sku) {
+            $repository->insertGetId(['sku' => $sku, 'occurred_at' => $tied]);
+        }
+        $repository->insertGetId(['sku' => 'e', 'occurred_at' => new DateTimeImmutable('2026-01-03 03:04:05')]);
+        $repository->deleteBy(['sku' => 'b']);
+        $read = $repository->read();
+        $request = static fn(int $page): PageRequest => new PageRequest($page, 2, ['occurred_at' => 'DESC']);
+
+        $pages = array_map(static fn(int $page) => $read->page($request($page)), [1, 2, 3]);
+
+        self::assertSame(
+            [['e', 'd'], ['c', 'a'], []],
+            array_map(static fn($page): array => array_column($page->items, 'sku'), $pages),
+        );
+        self::assertSame([4, 4, 4], array_column($pages, 'total'));
+        $all = $read->withVisibility(Visibility::All)->page($request(3));
+        self::assertSame([['a'], 5], [array_column($all->items, 'sku'), $all->total]);
     }
 
     public function testQueryBuilderMatchesUnquotedAliasReferencesOnTheServer(): void

@@ -15,6 +15,7 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Solo\Repository\Load;
 use Solo\Repository\Mapping;
+use Solo\Repository\PageRequest;
 use Solo\Repository\Relations\BelongsTo;
 use Solo\Repository\Relations\HasMany;
 use Solo\Repository\Repository;
@@ -200,6 +201,23 @@ final class RelationOrderTest extends TestCase
         self::assertSame([2, 4], self::ids($page));
         self::assertSame(['Chairs', 'Lamps'], array_map(static fn(object $product): string => $product->category->name, $page));
         self::assertSame(2, $this->products->read()->findOneBy([], ['brand.name' => 'DESC', 'id' => 'ASC'])?->id);
+    }
+
+    public function testPagesEndAPathOrderWithTheKey(): void
+    {
+        $page = $this->products->with(['category'])->page(new PageRequest(1, 3, ['category.name' => 'ASC']));
+
+        // SQLite orders NULL first; the two chairs tie on the name and fall to the key.
+        self::assertSame([3, 2, 5], self::ids($page->items));
+        self::assertSame(
+            [null, 'Chairs', 'Chairs'],
+            array_map(static fn(object $product): ?string => $product->category?->name, $page->items),
+        );
+        self::assertSame(5, $page->total);
+        self::assertStringContainsString(
+            'ORDER BY "br_base_order1"."name" ASC, "br_base"."id" ASC LIMIT 3',
+            $this->log->statements()[0],
+        );
     }
 
     public function testCollectionOrdersFollowPathsOfTheirTarget(): void

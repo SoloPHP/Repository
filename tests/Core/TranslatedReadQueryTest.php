@@ -19,6 +19,7 @@ use Psr\Log\AbstractLogger;
 use RuntimeException;
 use Solo\Repository\Filter;
 use Solo\Repository\Mapping;
+use Solo\Repository\PageRequest;
 use Solo\Repository\ReadQuery;
 use Solo\Repository\Repository;
 use Solo\Repository\Translations;
@@ -553,6 +554,20 @@ final class TranslatedReadQueryTest extends TestCase
                 localeColumn: 'locale',
             ) : null,
         );
+    }
+
+    public function testPagesOfATranslatedOrderBreakTiesByTheKey(): void
+    {
+        // Items 7, 8 and 10 have no English name and tie on NULL, which SQLite orders first.
+        $query = $this->repository->withLocale('en');
+
+        $first = $query->page(new PageRequest(1, 3, ['name' => 'ASC']));
+        self::assertSame([7, 8, 10], array_column($first->items, 'id'));
+        self::assertSame(9, $first->total);
+
+        $last = $query->page(new PageRequest(3, 3, ['name' => 'DESC']));
+        self::assertSame([10, 8, 7], array_column($last->items, 'id'));
+        self::assertSame(9, $last->total);
     }
 
     public function testQueryBuilderJoinsOnlyTheTranslationsItsCriteriaNeed(): void

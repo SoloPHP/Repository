@@ -17,6 +17,7 @@ use PHPUnit\Framework\TestCase;
 use Psr\Log\AbstractLogger;
 use Solo\Repository\Filter;
 use Solo\Repository\Mapping;
+use Solo\Repository\PageRequest;
 use Solo\Repository\Relations\BelongsTo;
 use Solo\Repository\Relations\BelongsToMany;
 use Solo\Repository\Relations\HasMany;
@@ -146,11 +147,28 @@ final class KeylessMappingTest extends TestCase
         yield 'row locks' => [static fn (Repository $stocks): mixed => $stocks->lockForUpdate([1]), 'lockForUpdate()'];
     }
 
-    public function testKeysetIterationAndRowsOfOnlyDefaultsAreRejectedBeforeSql(): void
+    public function testPagesReadTheRequestedOrderAlone(): void
+    {
+        $page = $this->stocks->read()->page(new PageRequest(1, 3, ['product_id' => 'DESC', 'store_id' => 'ASC']));
+
+        self::assertSame([[3, 3], [2, 1], [1, 1]], array_map(
+            static fn (object $stock): array => [$stock->product_id, $stock->store_id],
+            $page->items,
+        ));
+        self::assertSame(4, $page->total);
+        self::assertStringContainsString(
+            'ORDER BY "br_base"."product_id" DESC, "br_base"."store_id" ASC LIMIT 3',
+            $this->logger->queries[0],
+        );
+    }
+
+    public function testKeysetIterationUnorderedPagesAndRowsOfOnlyDefaultsAreRejectedBeforeSql(): void
     {
         $operations = [
             'Keyset iteration requires an integer primary key.' => static fn (Repository $stocks): mixed
                 => $stocks->read()->iterateById(),
+            'Pages of mapping "stocks" need an order: it has no primary key.' => static fn (Repository $stocks): mixed
+                => $stocks->read()->page(new PageRequest(1, 2)),
             'Rows of a mapping without a primary key need at least one column.' => static fn (Repository $stocks): mixed
                 => $stocks->insertMany([[]]),
         ];

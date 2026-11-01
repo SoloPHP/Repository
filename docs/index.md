@@ -22,7 +22,7 @@ features:
     details: Map an existing table to ordinary PHP objects. Values are converted before your hydrator runs; partial reads return typed rows.
   - icon: 🔎
     title: Reusable queries
-    details: Branch independent ReadQuery settings for locale, visibility, and includes. Group criteria with Filter, select related owners with EXISTS, and search with LIKE patterns that escape the same way on every database.
+    details: Branch independent ReadQuery settings for locale, visibility, and includes. Group criteria with Filter, select related owners with EXISTS, search with LIKE patterns that escape the same way on every database, and read pages that keep tied rows in place and count only when they must.
   - icon: ✍️
     title: Explicit writes
     details: CRUD returns affected rows or a requested ID. Atomic bulk inserts and pivot writes join the application's transactions.
@@ -60,6 +60,7 @@ decimal `price`:
 ```php
 use Doctrine\DBAL\Types\Types;
 use Solo\Repository\Mapping;
+use Solo\Repository\PageRequest;
 use Solo\Repository\Repository;
 
 /** @var Repository<stdClass> $products */
@@ -73,11 +74,9 @@ $id = $products->insertGetId(['sku' => 'CHAIR', 'price' => '49.90']);
 $products->update($id, ['price' => '59.90']);
 $product = $products->read()->find($id);
 
-$page = $products->read()->findBy(
+$page = $products->read()->page(
+    new PageRequest(page: 1, perPage: 20, orderBy: ['price' => 'ASC']),
     criteria: ['price >=' => '50.00'],
-    orderBy: ['price' => 'ASC', 'id' => 'ASC'],
-    limit: 20,
-    offset: 0,
 );
 ```
 
