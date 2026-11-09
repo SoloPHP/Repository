@@ -55,16 +55,27 @@ final readonly class Filter
         return new self(FilterOperator::Not, [$part]);
     }
 
-    /** @param array<string, mixed>|self $criteria */
+    /**
+     * A dotted path nests one related filter per relation; the criteria and visibility
+     * apply to the last one, and the relations before it see their active rows.
+     *
+     * @param array<string, mixed>|self $criteria
+     */
     public static function related(
         string $relation,
         array|self $criteria = [],
         Visibility $visibility = Visibility::Active,
     ): self {
-        if (!Identifier::isValid($relation)) {
-            throw new InvalidArgumentException('A related filter requires a plain relation name.');
+        if (!Identifier::isPath($relation)) {
+            throw new InvalidArgumentException('A related filter requires a relation name or a dotted relation path.');
         }
 
-        return new self(FilterOperator::Related, [$criteria], $relation, $visibility);
+        $path = explode('.', $relation);
+        $filter = new self(FilterOperator::Related, [$criteria], array_pop($path), $visibility);
+        foreach (array_reverse($path) as $owner) {
+            $filter = new self(FilterOperator::Related, [$filter], $owner);
+        }
+
+        return $filter;
     }
 }

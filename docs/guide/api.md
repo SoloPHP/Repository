@@ -280,7 +280,7 @@ A `Filter` may also be the value of an array entry, under a string key that only
 ['status' => 'active', 'q' => Filter::any(['sku LIKE' => '%chair%'], ['name LIKE' => '%chair%'])]
 ```
 
-`related()` means EXISTS and accepts a single relation name. Conditions inside one call must match the same related row. Separate calls can match different rows. Use nested calls for deeper relationships and `not(related(...))` for NOT EXISTS:
+`related()` means EXISTS. Conditions inside one call must match the same related row. Separate calls can match different rows. Use `not(related(...))` for NOT EXISTS and a dotted path or nested calls for deeper relationships:
 
 ```php
 use Solo\Repository\Filter;
@@ -288,9 +288,11 @@ use Solo\Repository\Filter;
 $criteria = Filter::all(
     Filter::related('tags', ['slug' => 'sale', 'enabled' => true]),
     Filter::not(Filter::related('tags', ['slug' => 'blocked'])),
-    Filter::related('category', Filter::related('parent', ['id' => 10])),
+    Filter::related('category.parent', ['id' => 10]),
 );
 ```
+
+A path goes through relations of any kind and nests one call per relation: `related('tags.category', $criteria, $visibility)` is `related('tags', related('category', $criteria, $visibility))`. As in a `Load` path, the criteria and visibility belong to the last relation, and the relations before it see their active rows; nested calls give them conditions or a visibility of their own.
 
 Related predicates filter owners without duplicating their rows. They do not restrict what `with()` loads. Raw SQL, implicit scopes and collection sorting are not accepted. Case sensitivity, collation and NULL ordering follow the database; LIKE escaping does not (see [LIKE patterns](#like-patterns)).
 
