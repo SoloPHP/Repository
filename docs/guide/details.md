@@ -223,6 +223,8 @@ Filter::related(
 
 `related('tags', ['color' => 'red', 'size' => 'large'])` means **one** related row with both properties and compiles to EXISTS. Two separate `related('tags', ...)` inside `all` allow two different rows. `not(related(...))` is NOT EXISTS. OR inside related stays OR. Root rows are not multiplied by matching relations.
 
+A relation path nests one `related` per relation: `related('tags.category', ['code' => 'chairs'])` is `related('tags', related('category', ['code' => 'chairs']))`. As in a `Load` path, the criteria and visibility belong to the last relation, and the relations before it see their active rows. Unlike a path in a criteria key, it goes through relations of any kind, since all conditions of the call match one row of the last target.
+
 A key may name a field of a `BelongsTo` target by the path an order takes: `['category.code' => 'chairs']` is `related('category', ['code' => 'chairs'])`, over the target's active rows, and conditions of one array on the same target share one EXISTS, since an owner has one such row. Paths through to-many relations such as `tags.slug` are rejected: whether their conditions must match one related row is for `related` to say. SQL fragments, hidden scope keys and unknown fields are not accepted. Each EXISTS has its own alias and parameters. Ordering by a collection is not supported: its aggregate and JOIN are written with DBAL.
 
 An arbitrary root filter with a large IN is not split into several queries: that would change the semantics of OR, ordering and limits. Exceeding the parameter budget is an explicit error; another way to pass a large set is written with DBAL. Automatic splitting applies only to the loader's internal batches and to bulk inserts.

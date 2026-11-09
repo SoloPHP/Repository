@@ -357,16 +357,73 @@ final class RelatedFilterTest extends TestCase
         yield 'relation path' => [['category.code' => 'chairs']];
     }
 
-    public function testDotPathsAndSqlFragmentsAreNotRelationNames(): void
+    public function testEmptySegmentsAndSqlFragmentsAreNotRelationPaths(): void
     {
-        foreach (['tags.category', 'tags WHERE 1=1', '', 'tags; DROP TABLE tags'] as $name) {
+        $names = ['', 'tags.', '.tags', 'tags..category', 'tags WHERE 1=1', 'tags.category; DROP TABLE tags'];
+        foreach ($names as $name) {
             try {
                 Filter::related($name);
-                self::fail('A related filter must use a plain relation name.');
+                self::fail('A related filter must use a relation name or a dotted relation path.');
             } catch (InvalidArgumentException) {
                 self::assertSame([], $this->log->sql);
             }
         }
+    }
+
+    /** @return iterable<string, array{string, array<string, mixed>, Filter, list<int>}> */
+    public static function relationPaths(): iterable
+    {
+        yield 'through BelongsTo' => [
+            'category.parent',
+            ['code' => 'furniture'],
+            Filter::related('category', Filter::related('parent', ['code' => 'furniture'])),
+            [2, 6],
+        ];
+        yield 'through BelongsToMany' => [
+            'tags.category',
+            ['code' => 'chairs'],
+            Filter::related('tags', Filter::related('category', ['code' => 'chairs'])),
+            [1, 2],
+        ];
+        yield 'three relations' => [
+            'tags.category.parent',
+            ['code' => 'furniture'],
+            Filter::related('tags', Filter::related('category', Filter::related('parent', ['code' => 'furniture']))),
+            [1, 2],
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $criteria
+     * @param list<int> $ids
+     */
+    #[DataProvider('relationPaths')]
+    public function testARelationPathIsTheNestedRelatedFilters(
+        string $path,
+        array $criteria,
+        Filter $nested,
+        array $ids,
+    ): void {
+        $related = Filter::related($path, $criteria);
+        self::assertEquals($nested, $related);
+        self::assertSame($ids, $this->ids($this->products->read(), $related));
+        self::assertSame($ids, $this->ids($this->products->read(), $nested));
+        self::assertSame($this->log->sql[1], $this->log->sql[0]);
+        self::assertSame($this->log->parameters[1], $this->log->parameters[0]);
+    }
+
+    public function testAPathAppliesItsVisibilityToTheLastRelation(): void
+    {
+        // Tag 4, active and linked to product 2, joins the deleted category of the deleted tag 5
+        $this->connection->executeStatement('UPDATE tags SET category_id = 3 WHERE id = 4');
+
+        $all = Filter::related('tags.category', ['code' => 'hidden'], Visibility::All);
+        $nested = Filter::related('tags', Filter::related('category', ['code' => 'hidden'], Visibility::All));
+        self::assertEquals($nested, $all);
+        $active = Filter::related('tags.category', ['code' => 'hidden']);
+        self::assertSame([], $this->ids($this->products->read(), $active));
+        // Products 3 and 6 reach the category only through the deleted tag 5
+        self::assertSame([2], $this->ids($this->products->read(), $all));
     }
 
     /** @return iterable<string, array{array<string, mixed>, Filter, list<int>}> */

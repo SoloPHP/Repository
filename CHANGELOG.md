@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.5.0 — 2026-11-10
+
+### Features
+
+- `Filter::related()` takes a dotted path through relations of any kind, such as
+  `tags.category`, and nests one related filter per relation. As in a `Load` path,
+  the criteria and visibility belong to the last relation.
+  See [Criteria and Filter](https://solophp.github.io/Repository/guide/api#criteria-and-filter).
+
 ## 1.4.0 — 2026-11-09
 
 ### Features

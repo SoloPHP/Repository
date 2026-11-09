@@ -88,7 +88,7 @@ final class RelationsDatabaseTest extends DatabaseTestCase
     public function testNestedLoadsAndNestedExistsShareInheritedLocaleAndFallback(): void
     {
         $query = $this->items->withLocale('uk', 'en')->with(['category.parent']);
-        $criteria = Filter::related('category', Filter::related('parent', ['name' => 'Parent EN']));
+        $criteria = Filter::related('category.parent', ['name' => 'Parent EN']);
         $items = $query->findBy($criteria, ['id' => 'ASC']);
 
         self::assertSame([1, 2], self::ids($items));
