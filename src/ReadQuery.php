@@ -103,6 +103,30 @@ final readonly class ReadQuery
     }
 
     /**
+     * find() for an ID from outside, such as a route parameter: an ID no row can have ("007"
+     * for an integer key) is not found either, where find() rejects it as invalid.
+     *
+     * @return T
+     * @throws RecordNotFoundException When the read sees no row with the ID.
+     */
+    public function findOrFail(int|string $id): object
+    {
+        // A read that cannot answer at all says so, whatever the ID
+        $key = $this->mapping->requirePrimaryKey('findOrFail()');
+        $this->mapping->requireHydrator('Reading entities');
+        if ($this->locked) {
+            $this->db->assertTransaction();
+        }
+        try {
+            $normalized = $this->executor->mapper()->id($id);
+        } catch (InvalidArgumentException) {
+            throw new RecordNotFoundException($this->mapping->table, $id);
+        }
+
+        return $this->findOneBy([$key => $normalized]) ?? throw new RecordNotFoundException($this->mapping->table, $id);
+    }
+
+    /**
      * @param array<string, mixed>|Filter $criteria
      * @param array<string, string> $orderBy Fields, or relation paths to fields of BelongsTo targets.
      * @return T|null

@@ -6,10 +6,8 @@ namespace Solo\Repository\Internal;
 
 use Doctrine\DBAL\Query\QueryBuilder;
 use Doctrine\DBAL\Types\Types;
-use InvalidArgumentException;
 use LogicException;
 use Solo\Repository\Mapping;
-use Solo\Repository\Relations\BelongsTo;
 use Solo\Repository\Visibility;
 
 /**
@@ -115,12 +113,7 @@ final class FieldResolver
         $dot = strrpos($path, '.');
         $owner = $dot === false ? $this : $this->target(substr($path, 0, $dot));
         $name = $dot === false ? $path : substr($path, $dot + 1);
-        $relation = $owner->mapping->relation($name);
-        if (!$relation instanceof BelongsTo) {
-            throw new InvalidArgumentException(
-                sprintf('An order path follows BelongsTo relations only; "%s" is not one.', $name),
-            );
-        }
+        $relation = $owner->mapping->requireBelongsTo($name, 'An order path');
         $target = $relation->resolve($owner->mapping);
         $load = $owner->loads?->nodes[$name] ?? null;
         $visibility = $load?->load->visibility ?? Visibility::Active;

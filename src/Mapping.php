@@ -136,6 +136,22 @@ final readonly class Mapping
         return $this->relations[$name];
     }
 
+    /**
+     * @internal The relation a path follows, which only BelongsTo can be: one target row per owner.
+     * @return BelongsTo<object, object>
+     */
+    public function requireBelongsTo(string $name, string $path): BelongsTo
+    {
+        $relation = $this->relation($name);
+        if (!$relation instanceof BelongsTo) {
+            throw new InvalidArgumentException(
+                sprintf('%s follows BelongsTo relations only; "%s" is not one.', $path, $name),
+            );
+        }
+
+        return $relation;
+    }
+
     /** @param array<mixed> $relations */
     private function validateRelations(array $relations): void
     {

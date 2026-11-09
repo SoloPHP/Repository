@@ -22,6 +22,7 @@ use Solo\Repository\Filter;
 use Solo\Repository\Mapping;
 use Solo\Repository\PageRequest;
 use Solo\Repository\ReadQuery;
+use Solo\Repository\RecordNotFoundException;
 use Solo\Repository\Repository;
 use Solo\Repository\Visibility;
 use Stringable;
@@ -90,6 +91,32 @@ final class ReadQueryTest extends TestCase
         self::assertStringContainsString('LIMIT 1', $this->logger->queries[0]);
         self::assertNull($query->find(999));
         self::assertNull($query->find(11));
+    }
+
+    public function testFindOrFailAnswersAnIdNoVisibleRowHasAsNotFound(): void
+    {
+        $query = $this->query($this->mapping());
+        self::assertSame(3, $query->findOrFail('3')->id);
+        self::assertSame(11, $query->withVisibility(Visibility::All)->findOrFail(11)->id);
+
+        $exception = $this->notFound($query, 999);
+        self::assertSame('items', $exception->table);
+        self::assertSame('No visible row of "items" has the requested ID.', $exception->getMessage());
+        self::assertSame(11, $this->notFound($query, 11)->id);
+    }
+
+    public function testFindOrFailAnswersAnIdNoRowCanHaveAsNotFoundWithoutSql(): void
+    {
+        $query = $this->query($this->mapping());
+
+        foreach (['007', '3.0', ' 3', '', '99999999999999999999'] as $id) {
+            self::assertSame($id, $this->notFound($query, $id)->id);
+        }
+        self::assertSame([], $this->logger->queries);
+
+        // find() is for IDs the application trusts: there such an ID is a mistake
+        $this->expectException(InvalidArgumentException::class);
+        $query->find('007');
     }
 
     public function testVisibilityBranchesRemainIndependentAndReusable(): void
@@ -426,6 +453,17 @@ final class ReadQueryTest extends TestCase
             hydrate: $hydrate ?? static fn(array $row): object => (object) $row,
             softDeleteColumn: $softDelete ? 'deleted_at' : null,
         );
+    }
+
+    private function notFound(ReadQuery $query, int|string $id): RecordNotFoundException
+    {
+        try {
+            $query->findOrFail($id);
+        } catch (RecordNotFoundException $exception) {
+            return $exception;
+        }
+
+        self::fail(sprintf('ID %s must not be found.', var_export($id, true)));
     }
 
     private function query(Mapping $mapping, ?Connection $connection = null): ReadQuery

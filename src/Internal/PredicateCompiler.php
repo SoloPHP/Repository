@@ -75,15 +75,36 @@ final class PredicateCompiler
         }
 
         $parts = [];
+        /** @var array<string, array<string, mixed>> $targets conditions on a BelongsTo target, by the rest of their path */
+        $targets = [];
         foreach ($criteria as $key => $value) {
             if (!is_string($key)) {
                 throw new InvalidArgumentException('Criteria must use column names as keys.');
+            }
+
+            // The key of a Filter only labels it, as the name of the input field that built it does
+            if ($value instanceof Filter) {
+                $parts[] = $this->normalize($value, $mapping);
+                continue;
+            }
+
+            $path = trim($key);
+            $dot = strpos($path, '.');
+            if ($dot !== false) {
+                $targets[substr($path, 0, $dot)][substr($path, $dot + 1)] = $value;
+                continue;
             }
 
             [$field, $operator] = self::parseCondition($key);
             $type = $this->fields === null ? $mapping->columnType($field) : $mapping->fieldType($field);
             self::validateValue($field, $type, $operator, $value);
             $parts[] = $value === [] ? $operator === 'NOT IN' : new Condition($field, $operator, $value, $type);
+        }
+
+        // One EXISTS per target: an owner has a single row of each BelongsTo target
+        foreach ($targets as $relation => $conditions) {
+            $mapping->requireBelongsTo($relation, 'A criteria path');
+            $parts[] = $this->normalizeExists(Filter::related($relation, $conditions), $mapping);
         }
 
         return self::fold(FilterOperator::All, $parts);
@@ -93,7 +114,9 @@ final class PredicateCompiler
     private function normalizeExists(Filter $filter, Mapping $owner): Exists|bool
     {
         if ($this->fields === null) {
-            throw new InvalidArgumentException('Related filters are supported only for read queries.');
+            throw new InvalidArgumentException(
+                'Related filters and relation paths are supported only for read queries.',
+            );
         }
 
         $relation = $owner->relation($filter->relation);

@@ -50,6 +50,9 @@ $product = $products->read()->find($id); // Read explicitly when you need a mode
 `insertGetId` returns the primary key. Missing records return `null` from `find`
 and `findOneBy`; updates do not throw solely because no record matched.
 
+For an ID from outside, such as a route parameter, `findOrFail()` throws
+`RecordNotFoundException` instead, also for an ID no row can have, such as `"007"`.
+
 ## Read, filter, and paginate
 
 ```php
@@ -102,6 +105,9 @@ Locale and fallback flow into loaded relations and related predicates. Only
 `null` or a missing translation triggers fallback; an empty string is a real
 translation. `Load::criteria` limits the loaded collection; `Filter::related`
 selects owners. One does not implicitly change the other.
+
+Criteria can also name a field of a `BelongsTo` target by its path, as an order
+does: `['category.name LIKE' => Like::contains($search)]`.
 
 The [public API reference](api.md) defines mappings, translation storage, all four
 relation types, visibility, and transaction behavior. In the source checkout,

@@ -152,6 +152,7 @@ ReadQuery::withVisibility(Visibility $visibility): self;
 ReadQuery::forUpdate(): self;
 
 ReadQuery::find(int|string $id): ?object;               // T|null
+ReadQuery::findOrFail(int|string $id): object;          // T
 ReadQuery::findOneBy(array|Filter $criteria, array $orderBy = []): ?object;
 ReadQuery::findBy(
     array|Filter $criteria = [],
@@ -182,6 +183,7 @@ ReadQuery::queryBuilder(string $alias, array|Filter $criteria = []): QueryBuilde
 In `findBy()`, `findOneBy()` and `rows()`, an `orderBy` key may also be a dotted path through `BelongsTo` relations to a readable field of their target, such as `category.name` or `category.parent.name`. Each target on a path is LEFT JOINed once per statement on its primary key, over the rows that a load of the same relation path in the read sees: its active rows, unless the read loads that relation with another visibility. A list that shows soft-deleted categories through `with([new Load('category', visibility: Visibility::All)])` thus also orders by their names; only the load's visibility applies, not its criteria. A row whose reference is NULL, dangling or not visible orders as one with NULL there; where NULL sorts follows the database (first in ascending order on MySQL, MariaDB and SQLite, last on PostgreSQL). A translated target field is read in the query locale and fallback, which the target inherits as relation loads do. Paths through `HasOne`, `HasMany` or `BelongsToMany`, which could match several rows, are rejected before SQL. The default order of a to-many relation and the order of a `Load` take the same paths, resolved from the target.
 
 - `find()` and `findOneBy()` return NULL when no visible row matches. They limit the root SELECT to one row.
+- `findOrFail()` is `find()` for an ID from outside, such as a route parameter. It throws `RecordNotFoundException`, with the mapping's `table` and the `id` as given, when no visible row has the ID, and also, without SQL, for an ID no row can have, which `find()` rejects as invalid. A mapping without a primary key or hydrator, or a locking read outside a transaction, still throws `LogicException`, whatever the ID.
 - `findBy()` materializes the requested models and their includes. No automatic pagination count is performed; [`page()`](#pages) reads a page with its total.
 - `rows()` returns only the selected, DBAL-converted fields and never calls the hydrator. It rejects nonempty includes; use `with([])` on that branch.
 - `count()` and `exists()` do not hydrate models or resolve/load includes. Relation predicates in their criteria still apply. `exists()` selects a constant with a one-row limit.
@@ -272,6 +274,12 @@ Filter::related(
 
 `all()` and `any()` require at least one argument. `Filter` is created through these factories; its constructor is private and its properties are internal to the compiler. All branches are validated, including those eliminated by constant folding. SQL NULL logic still applies: `not(['price >' => '10.00'])` does not automatically include NULL prices.
 
+A `Filter` may also be the value of an array entry, under a string key that only labels it: it joins the AND of the array. An input's filter fields, some of them built into a `Filter`, can thus be read as one array:
+
+```php
+['status' => 'active', 'q' => Filter::any(['sku LIKE' => '%chair%'], ['name LIKE' => '%chair%'])]
+```
+
 `related()` means EXISTS and accepts a single relation name. Conditions inside one call must match the same related row. Separate calls can match different rows. Use nested calls for deeper relationships and `not(related(...))` for NOT EXISTS:
 
 ```php
@@ -284,7 +292,9 @@ $criteria = Filter::all(
 );
 ```
 
-Related predicates filter owners without duplicating their rows. They do not restrict what `with()` loads. Field paths such as `tags.slug`, raw SQL, implicit scopes and collection sorting are not accepted. Case sensitivity, collation and NULL ordering follow the database; LIKE escaping does not (see [LIKE patterns](#like-patterns)).
+Related predicates filter owners without duplicating their rows. They do not restrict what `with()` loads. Raw SQL, implicit scopes and collection sorting are not accepted. Case sensitivity, collation and NULL ordering follow the database; LIKE escaping does not (see [LIKE patterns](#like-patterns)).
+
+In read criteria, a key may name a field of a `BelongsTo` target by the dotted path an order takes, such as `category.code` or `category.parent.name LIKE`. It reads as `Filter::related()` on that target, so it sees active targets only, unlike an order path, which follows the visibility of the relation's load; conditions of one array on the same target share one EXISTS. Inside `Filter::related()`, a path starts at its target. Paths through `HasOne`, `HasMany` or `BelongsToMany`, such as `tags.slug`, are rejected before SQL: whether their conditions must match one related row is for `Filter::related()` to say. Writes reject paths.
 
 Every statement has a budget of bound parameters, including locale JOINs and nested EXISTS, in which every value of an IN list counts. By default it is the platform limit: 65,535 for PostgreSQL and MySQL/MariaDB, 32,766 for SQLite 3.32 or later, and 900 for older SQLite and other platforms. `new Repository($db, $mapping, parameterLimit: 2000)` replaces it for that repository, its queries and its relation loads, for example to reject large root IN filters early. The value must be positive and must not exceed what the server accepts; raise it only on a platform whose real limit is above the default. Keyset iteration reserves one parameter for continuation. Oversized root criteria are rejected rather than split: splitting would change ordering, pagination or Boolean semantics. Loader batches, `insertMany()` and `LinkSet` split their own internal work within this budget; an operation whose single row does not fit, such as a two-parameter pivot row under a budget of 1, throws InvalidArgumentException. Internal key lists (relation loads, `lockForUpdate()` and `LinkSet` deletes) also hold at most 5,000 keys per statement, because longer IN lists can exceed MySQL's range-optimizer memory and turn index lookups into full scans.
 
@@ -543,7 +553,8 @@ Everything the caller adds is plain DBAL: joined tables get no visibility or loc
 
 | Failure | Expected category |
 |---|---|
-| Invalid metadata, unknown fields, unsupported filters/options, a LIKE pattern ending in an unpaired `\`, invalid IDs, page requests or pages, or parameter budget | `InvalidArgumentException` |
+| Invalid metadata, unknown fields, unsupported filters/options, criteria paths through to-many relations or in writes, a LIKE pattern ending in an unpaired `\`, invalid IDs, page requests or pages, or parameter budget | `InvalidArgumentException` |
+| `findOrFail()` of an ID no visible row has, or no row can have | `RecordNotFoundException` (a `RuntimeException`) |
 | Missing translation metadata, restore without soft deletion, unsupported generated-ID/upsert platform, locking read outside a transaction, aggregate, page or query builder of a locking read | `LogicException` |
 | Non-object hydration/assignment result, invalid relation factory result, multiple HasOne matches, invalid generated-ID result | `UnexpectedValueException` |
 | SQL, FK, UNIQUE or DBAL type-conversion failure | Original DBAL/driver exception |

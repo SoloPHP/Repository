@@ -136,6 +136,11 @@ final class KeylessMappingTest extends TestCase
     public static function operationsById(): iterable
     {
         yield 'find' => [static fn (Repository $stocks): mixed => $stocks->read()->find(1), 'find()'];
+        // Not "not found": an ID no row could have does not hide a mapping that cannot answer
+        yield 'find or fail' => [
+            static fn (Repository $stocks): mixed => $stocks->read()->findOrFail('007'),
+            'findOrFail()',
+        ];
         yield 'update' => [static fn (Repository $stocks): mixed => $stocks->update(1, ['quantity' => 0]), 'update()'];
         yield 'delete' => [static fn (Repository $stocks): mixed => $stocks->delete(1), 'delete()'];
         yield 'restore' => [static fn (Repository $stocks): mixed => $stocks->restore(1), 'restore()'];

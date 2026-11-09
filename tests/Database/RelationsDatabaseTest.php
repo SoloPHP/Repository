@@ -18,6 +18,8 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use Solo\Repository\Filter;
 use Solo\Repository\Load;
 use Solo\Repository\Mapping;
+use Solo\Repository\PageRequest;
+use Solo\Repository\RecordNotFoundException;
 use Solo\Repository\Relations\BelongsTo;
 use Solo\Repository\Relations\BelongsToMany;
 use Solo\Repository\Relations\HasMany;
@@ -156,6 +158,39 @@ final class RelationsDatabaseTest extends DatabaseTestCase
         // Without that load the category is missing, and NULL sorts first or last by platform.
         self::assertNotSame([1, 3, 6], self::ids($read->with(['category'])->findBy($criteria, $order)));
         self::assertNotSame([1, 3, 6], self::ids($read->findBy($criteria, $order)));
+    }
+
+    public function testCriteriaPathsFilterByActiveBelongsToTargetsInTheLocaleOfTheRead(): void
+    {
+        $read = $this->items->withLocale('uk', 'en');
+
+        self::assertSame([1, 2], self::ids($read->findBy(['category.name LIKE' => 'Category%'], ['id' => 'ASC'])));
+        // Parent 100 has no Ukrainian name and falls back to English. Item 3 belongs to the
+        // deleted category 20 under the same parent, which a path does not see.
+        self::assertSame([1, 2], self::ids($read->findBy(['category.parent.name' => 'Parent EN'], ['id' => 'ASC'])));
+        self::assertSame([], self::ids($read->findBy(['category.name' => 'Hidden category'])));
+
+        $page = $read->page(
+            new PageRequest(1, 1, ['id' => 'ASC']),
+            ['category.parent.name' => 'Parent EN', 'q' => Filter::not(['sku' => 'SKU-2'])],
+        );
+        self::assertSame([1], self::ids($page->items));
+        self::assertSame(1, $page->total);
+
+        // The criteria of a load take paths and Filter values from the relation's target
+        $load = static fn (array $criteria): ?object => $read->with([new Load('category', criteria: $criteria)])
+            ->findOrFail(1)->relation('category');
+        self::assertSame(10, $load(['parent.name' => 'Parent EN', 'q' => Filter::not(['id' => 99])])?->value('id'));
+        self::assertNull($load(['parent.name' => 'Nobody']));
+    }
+
+    public function testFindOrFailAnswersIdsNoVisibleRowHasOnTheServer(): void
+    {
+        self::assertSame(1, $this->items->read()->findOrFail('1')->value('id'));
+
+        // Item 5 is deleted
+        $this->expectExceptionObject(new RecordNotFoundException('repo_rel_items', 5));
+        $this->items->read()->findOrFail(5);
     }
 
     public function testLockingReadLocksTheRowsOfItsTableAndNotItsRelationLoads(): void

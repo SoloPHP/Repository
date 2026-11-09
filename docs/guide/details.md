@@ -27,7 +27,7 @@ Solo Repository turns database rows into ordinary PHP objects, resolves translat
 
 ## Testing on MySQL, MariaDB and PostgreSQL
 
-The shared suite checks generated IDs and CRUD, decimal/bool/date/JSON conversion, LIKE escaping (on MySQL and MariaDB also under `NO_BACKSLASH_ESCAPES`), soft delete and keyset iteration, pages whose ties fall to the key, native row upserts and PATCH upserts of translations, the single fallback rule, four relation types, nested EXISTS and ordering by `BelongsTo` paths. Locking reads are checked with a second session: which rows the lock holds and how such a read differs from the snapshot of a REPEATABLE READ transaction on each database. A second session also stores a pair between the read and the insert of `attach()`: at the server's isolation level and at REPEATABLE READ the suite checks where the conflict is skipped and where the transaction is refused. Separate scenarios check batch boundaries, a statement with the server's maximum number of parameters (65,535), ordering of a 905-item collection, release of the previous page, string keys and native PostgreSQL UUIDs, rollback of a late batch and continuation of an outer transaction after a savepoint. The schemas have real FK and UNIQUE constraints; the tests run SQL on the servers without platform mocks.
+The shared suite checks generated IDs and CRUD, decimal/bool/date/JSON conversion, LIKE escaping (on MySQL and MariaDB also under `NO_BACKSLASH_ESCAPES`), soft delete and keyset iteration, pages whose ties fall to the key, native row upserts and PATCH upserts of translations, the single fallback rule, four relation types, nested EXISTS, ordering and filtering by `BelongsTo` paths and `findOrFail()` of hidden rows. Locking reads are checked with a second session: which rows the lock holds and how such a read differs from the snapshot of a REPEATABLE READ transaction on each database. A second session also stores a pair between the read and the insert of `attach()`: at the server's isolation level and at REPEATABLE READ the suite checks where the conflict is skipped and where the transaction is refused. Separate scenarios check batch boundaries, a statement with the server's maximum number of parameters (65,535), ordering of a 905-item collection, release of the previous page, string keys and native PostgreSQL UUIDs, rollback of a late batch and continuation of an outer transaction after a savepoint. The schemas have real FK and UNIQUE constraints; the tests run SQL on the servers without platform mocks.
 
 `.github/workflows/tests.yml` keeps three jobs of the main SQLite suite and runs `Database` on each of the three databases for the same combinations:
 
@@ -150,6 +150,7 @@ withVisibility(Visibility $visibility): self;
 forUpdate(): self;                         // locking read
 
 find(int|string $id): ?object;             // T|null
+findOrFail(int|string $id): object;        // T, or RecordNotFoundException
 findOneBy(array|Filter $criteria, array $orderBy = []): ?object;
 findBy(
     array|Filter $criteria = [],
@@ -177,7 +178,7 @@ queryBuilder(string $alias, array|Filter $criteria = []): QueryBuilder;
 
 Every `with*` returns a new object. Terminal methods do not reset the settings: a query can be repeated and branched independently. `with()` replaces the whole list of loads, and `with([])` clears it. A DBAL builder is never kept as shared mutable state.
 
-`find` and `findOneBy` limit the SQL to one row. `exists` selects a constant with LIMIT 1. `count` counts root rows; `with()` loads do not affect these two operations. None of these methods runs an extra COUNT for pagination.
+`find` and `findOneBy` limit the SQL to one row. `findOrFail` is `find` for an ID from outside, such as a route parameter: it throws `RecordNotFoundException` when no visible row has the ID, and also, without SQL, for an ID no row can have (`"007"` for an integer key), which `find` rejects as invalid. A mapping that cannot address rows by ID and a locking read outside a transaction still throw `LogicException`. `exists` selects a constant with LIMIT 1. `count` counts root rows; `with()` loads do not affect these two operations. None of these methods runs an extra COUNT for pagination.
 
 `sum`, `min`, `max` and `avg` aggregate one readable field (a translated one too, in the query's locale) over the same rows `count` counts: the same criteria, relation predicates and visibility. The total of a filtered list matches its filter. `sum`, `min` and `max` convert the result by the field's DBAL type: the sum of a decimal is an exact string, `max('created_at')` is a `DateTimeImmutable`. Without matching rows `sum` returns the zero of the field's type and the others return NULL. `sum` and `avg` take only smallint, integer, bigint, decimal, float and smallfloat fields; other fields are rejected before SQL. Aggregates over several tables are built with DBAL.
 
@@ -218,11 +219,11 @@ Filter::related(
 ): Filter;
 ```
 
-`all` and `any` need at least one argument. An empty array means true. Logical groups are kept as written; simple constants are normalized. NOT follows SQL three-valued logic: `NOT(price > 10)`, for example, does not include NULL prices automatically.
+`all` and `any` need at least one argument. An empty array means true. A `Filter` may also be the value of an array entry: it joins the array's AND, and its key only labels it, so the filter fields of an input, some built into a `Filter`, are read as one array. Logical groups are kept as written; simple constants are normalized. NOT follows SQL three-valued logic: `NOT(price > 10)`, for example, does not include NULL prices automatically.
 
 `related('tags', ['color' => 'red', 'size' => 'large'])` means **one** related row with both properties and compiles to EXISTS. Two separate `related('tags', ...)` inside `all` allow two different rows. `not(related(...))` is NOT EXISTS. OR inside related stays OR. Root rows are not multiplied by matching relations.
 
-Names such as `tags.slug`, SQL fragments, hidden scope keys and unknown fields are not accepted. Nested relations are expressed by nested `related`, not by ambiguous dot parsing. Each EXISTS has its own alias and parameters. Ordering by a collection is not supported: its aggregate and JOIN are written with DBAL.
+A key may name a field of a `BelongsTo` target by the path an order takes: `['category.code' => 'chairs']` is `related('category', ['code' => 'chairs'])`, over the target's active rows, and conditions of one array on the same target share one EXISTS, since an owner has one such row. Paths through to-many relations such as `tags.slug` are rejected: whether their conditions must match one related row is for `related` to say. SQL fragments, hidden scope keys and unknown fields are not accepted. Each EXISTS has its own alias and parameters. Ordering by a collection is not supported: its aggregate and JOIN are written with DBAL.
 
 An arbitrary root filter with a large IN is not split into several queries: that would change the semantics of OR, ordering and limits. Exceeding the parameter budget is an explicit error; another way to pass a large set is written with DBAL. Automatic splitting applies only to the loader's internal batches and to bulk inserts.
 

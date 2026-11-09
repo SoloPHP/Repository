@@ -97,6 +97,7 @@ final class LockingReadTest extends TestCase
     public static function lockingReads(): iterable
     {
         yield 'find' => [static fn(ReadQuery $read): ?int => $read->find(1)?->id, 1];
+        yield 'findOrFail' => [static fn(ReadQuery $read): int => $read->findOrFail('1')->id, 1];
         yield 'findOneBy' => [static fn(ReadQuery $read): ?int => $read->findOneBy(['amount' => 20])?->id, 2];
         yield 'findBy' => [
             static fn(ReadQuery $read): array => array_column($read->findBy(orderBy: ['id' => 'DESC']), 'id'),
@@ -111,6 +112,16 @@ final class LockingReadTest extends TestCase
             static fn(ReadQuery $read): array => array_column(iterator_to_array($read->iterateById(), false), 'id'),
             [1, 2],
         ];
+    }
+
+    public function testAnIdNoRowCanHaveDoesNotHideALockOutsideATransaction(): void
+    {
+        $this->expectExceptionObject(new LogicException('Row locks require an active transaction.'));
+        try {
+            $this->items->read()->forUpdate()->findOrFail('007');
+        } finally {
+            self::assertSame([], $this->log->statements());
+        }
     }
 
     #[DataProvider('readsWithoutRows')]

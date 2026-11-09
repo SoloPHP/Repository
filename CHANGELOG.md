@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.4.0 — 2026-11-09
+
+### Features
+
+- `ReadQuery::findOrFail()` throws `RecordNotFoundException` when no visible row has
+  the ID, also for an ID no row can have, such as `"007"`, which `find()` rejects.
+- Read criteria name a field of a `BelongsTo` target by its path, as an order does:
+  `['category.name LIKE' => ...]` is a related filter on that target.
+- A `Filter` may be the value of a criteria entry; it joins the AND of the array.
+  See [Criteria and Filter](https://solophp.github.io/Repository/guide/api#criteria-and-filter).
+
 ## 1.3.0 — 2026-11-01
 
 ### Features

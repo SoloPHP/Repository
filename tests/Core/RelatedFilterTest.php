@@ -296,8 +296,9 @@ final class RelatedFilterTest extends TestCase
         self::assertSame(5, $this->products->read()->count(Filter::not(Filter::related('tags', ['id IN' => []]))));
     }
 
+    /** @param array<string, mixed>|Filter $criteria */
     #[DataProvider('invalidCriteria')]
-    public function testEveryRelatedBranchIsValidatedBeforeSqlEvenWhenItWouldBeFolded(Filter $criteria): void
+    public function testEveryRelatedBranchIsValidatedBeforeSqlEvenWhenItWouldBeFolded(array|Filter $criteria): void
     {
         $this->expectException(InvalidArgumentException::class);
         try {
@@ -317,10 +318,20 @@ final class RelatedFilterTest extends TestCase
         yield 'unknown target field under false' => [Filter::all(['id IN' => []], Filter::related('tags', ['x' => 1]))];
         yield 'invalid nested branch under true' => [Filter::related('tags', Filter::any([], ['name LIKE' => null]))];
         yield 'deleted visibility without metadata' => [Filter::related('detail', visibility: Visibility::Deleted)];
+        yield 'path through many to many' => [['tags.slug' => 'sale']];
+        yield 'path through has many' => [['reviews.rating >=' => 4]];
+        yield 'path through has one' => [['detail.note' => 'good']];
+        yield 'path through to many after belongs to' => [['category.tags.slug' => 'sale']];
+        yield 'path through an unknown relation' => [['maker.name' => 'x']];
+        yield 'path to an unknown target field' => [['category.title' => 'x']];
+        yield 'path with an empty segment' => [['category..code' => 'x']];
+        yield 'path ending in a dot' => [['category.' => 'x']];
+        yield 'unknown field in a Filter value' => [['q' => Filter::any(['sku' => 'sku-1'], ['title' => 'x'])]];
     }
 
+    /** @param array<string, mixed>|Filter $criteria */
     #[DataProvider('writeCriteria')]
-    public function testWriteModeRejectsRelatedPredicatesIncludingFoldedBranches(Filter $criteria): void
+    public function testWriteModeRejectsRelatedPredicatesIncludingFoldedBranches(array|Filter $criteria): void
     {
         foreach (['updateBy', 'deleteBy'] as $operation) {
             try {
@@ -343,6 +354,7 @@ final class RelatedFilterTest extends TestCase
         yield 'under true' => [Filter::any([], Filter::related('tags'))];
         yield 'under false' => [Filter::all(['id IN' => []], Filter::related('tags'))];
         yield 'empty related set' => [Filter::related('tags', ['id IN' => []])];
+        yield 'relation path' => [['category.code' => 'chairs']];
     }
 
     public function testDotPathsAndSqlFragmentsAreNotRelationNames(): void
@@ -355,6 +367,83 @@ final class RelatedFilterTest extends TestCase
                 self::assertSame([], $this->log->sql);
             }
         }
+    }
+
+    /** @return iterable<string, array{array<string, mixed>, Filter, list<int>}> */
+    public static function belongsToPaths(): iterable
+    {
+        yield 'one target field' => [
+            ['category.code' => 'chairs'],
+            Filter::related('category', ['code' => 'chairs']),
+            [2, 6],
+        ];
+        yield 'a key with spaces around it, as a plain field may have' => [
+            [' category.code ' => 'chairs'],
+            Filter::related('category', ['code' => 'chairs']),
+            [2, 6],
+        ];
+        yield 'a translated target field in the locale of the read' => [
+            ['category.name' => 'Chairs'],
+            Filter::related('category', ['name' => 'Chairs']),
+            [2, 6],
+        ];
+        yield 'conditions on one target' => [
+            ['category.code' => 'chairs', 'sku' => 'sku-2', 'category.parent_id' => 1],
+            Filter::all(['sku' => 'sku-2'], Filter::related('category', ['code' => 'chairs', 'parent_id' => 1])),
+            [2],
+        ];
+        yield 'conditions on one target two relations away' => [
+            ['category.parent.code LIKE' => 'furn%', 'category.parent.id' => 1],
+            Filter::related('category', Filter::related('parent', ['code LIKE' => 'furn%', 'id' => 1])),
+            [2, 6],
+        ];
+    }
+
+    /** @param array<string, mixed> $path */
+    #[DataProvider('belongsToPaths')]
+    public function testABelongsToPathIsTheRelatedFilterOfItsTarget(array $path, Filter $related, array $ids): void
+    {
+        self::assertSame($ids, $this->ids($this->products->read(), $path));
+        self::assertSame($ids, $this->ids($this->products->read(), $related));
+        self::assertSame($this->log->sql[1], $this->log->sql[0]);
+    }
+
+    public function testABelongsToPathSeesActiveTargetsAndNotKeepsRowsWithoutOne(): void
+    {
+        self::assertSame([], $this->ids($this->products->read(), ['category.code' => 'hidden']));
+        // Product 3 is in the deleted category, 4 in none
+        self::assertSame([1, 3, 4], $this->ids($this->products->read(), Filter::not(['category.code' => 'chairs'])));
+    }
+
+    public function testAPathInsideARelatedFilterStartsAtItsTarget(): void
+    {
+        self::assertSame([1, 2], $this->ids(
+            $this->products->read(),
+            Filter::related('tags', ['category.code' => 'chairs']),
+        ));
+        self::assertSame([1], $this->ids(
+            $this->products->read()->withLocale('uk', 'en'),
+            Filter::any(['category.name' => 'Меблі'], ['category.name' => 'nothing']),
+        ));
+    }
+
+    public function testAFilterValueJoinsTheCriteriaAndItsKeyOnlyLabelsIt(): void
+    {
+        $tagged = Filter::related('tags', ['color' => 'red']);
+
+        self::assertSame([1, 2], $this->ids($this->products->read(), ['category_id IN' => [1, 2], 'q' => $tagged]));
+        self::assertSame([1, 2], $this->ids($this->products->read(), Filter::all(['category_id IN' => [1, 2]], $tagged)));
+        self::assertSame($this->log->sql[1], $this->log->sql[0]);
+        self::assertSame($this->log->parameters[1], $this->log->parameters[0]);
+
+        // The key of a Filter names no condition, even when it is a field of the mapping
+        self::assertSame([2, 6], $this->ids($this->products->read(), [
+            'category_id' => Filter::related('category', ['code' => 'chairs']),
+        ]));
+        self::assertSame(2, $this->productRepository(translated: false)->updateBy(
+            ['q' => Filter::any(['sku' => 'sku-1'], ['sku' => 'sku-2'])],
+            ['sku' => 'changed'],
+        ));
     }
 
     public function testGlobalParameterBudgetIncludesRootFieldsNestedValuesAndEveryLocaleJoin(): void

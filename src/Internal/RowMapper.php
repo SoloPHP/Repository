@@ -124,6 +124,11 @@ final readonly class RowMapper
         return $normalized;
     }
 
+    /**
+     * The ID as the primary key holds it. InvalidArgumentException means no row can have the ID,
+     * which ReadQuery::findOrFail() answers as not found; a mapping that cannot address rows by ID
+     * at all throws LogicException.
+     */
     public function id(int|string $id): int|string
     {
         $idType = $this->idType ?? throw new LogicException(

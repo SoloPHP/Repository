@@ -145,6 +145,8 @@ function relationsAcceptTypedAssignCallbacks(Connection $connection): void
         $repository->with(['category'])->forUpdate(),
     );
     assertType('Solo\Repository\Tests\Types\Product|null', $repository->read()->forUpdate()->find(1));
+    assertType('Solo\Repository\Tests\Types\Product', $repository->read()->findOrFail('1'));
+    assertType('Solo\Repository\Tests\Types\Product', $repository->with(['category'])->forUpdate()->findOrFail(1));
     $repository->upsert(['category_id' => 1], [], ['id' => 2]);
 
     acceptsAnyRepository($repository);
