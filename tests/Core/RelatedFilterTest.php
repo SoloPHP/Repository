@@ -326,6 +326,8 @@ final class RelatedFilterTest extends TestCase
         yield 'path to an unknown target field' => [['category.title' => 'x']];
         yield 'path with an empty segment' => [['category..code' => 'x']];
         yield 'path ending in a dot' => [['category.' => 'x']];
+        yield 'path starting with a number' => [['1.code' => 'x']];
+        yield 'path ending in a number' => [['category.1' => 'x']];
         yield 'unknown field in a Filter value' => [['q' => Filter::any(['sku' => 'sku-1'], ['title' => 'x'])]];
     }
 
@@ -355,6 +357,8 @@ final class RelatedFilterTest extends TestCase
         yield 'under false' => [Filter::all(['id IN' => []], Filter::related('tags'))];
         yield 'empty related set' => [Filter::related('tags', ['id IN' => []])];
         yield 'relation path' => [['category.code' => 'chairs']];
+        yield 'path through an unknown relation' => [['maker.name' => 'x']];
+        yield 'unknown related filter' => [Filter::related('maker')];
     }
 
     public function testEmptySegmentsAndSqlFragmentsAreNotRelationPaths(): void
