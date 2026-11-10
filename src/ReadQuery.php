@@ -103,8 +103,10 @@ final readonly class ReadQuery
     }
 
     /**
-     * find() for an ID from outside, such as a route parameter: an ID no row can have ("007"
-     * for an integer key) is not found either, where find() rejects it as invalid.
+     * find() for an ID from outside, such as a route parameter: an ID the type of the key rejects
+     * ("007" for an integer key) is not found either, where find() rejects it as invalid. An ID
+     * only the server rejects, such as a number beyond the column's range or, on PostgreSQL, a
+     * string that is not a UUID for a uuid column, stays the server's error.
      *
      * @return T
      * @throws RecordNotFoundException When the read sees no row with the ID.

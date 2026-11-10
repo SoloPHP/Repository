@@ -51,7 +51,8 @@ $product = $products->read()->find($id); // Read explicitly when you need a mode
 and `findOneBy`; updates do not throw solely because no record matched.
 
 For an ID from outside, such as a route parameter, `findOrFail()` throws
-`RecordNotFoundException` instead, also for an ID no row can have, such as `"007"`.
+`RecordNotFoundException` instead, also for an ID the type of the key rejects, such as
+`"007"` for an integer key.
 
 ## Read, filter, and paginate
 

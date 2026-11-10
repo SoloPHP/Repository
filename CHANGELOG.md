@@ -9,6 +9,13 @@
   the criteria and visibility belong to the last relation.
   See [Criteria and Filter](https://solophp.github.io/Repository/guide/api#criteria-and-filter).
 
+### Fixes
+
+- A criteria path whose first segment is a number, such as `1.code`, is rejected with
+  `InvalidArgumentException`, as any other unknown relation, instead of a `TypeError`.
+- A write whose criteria name a path through an unknown relation says that paths are
+  for reads, as it does for a known relation.
+
 ## 1.4.0 — 2026-11-09
 
 ### Features

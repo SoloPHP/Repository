@@ -125,9 +125,10 @@ final readonly class RowMapper
     }
 
     /**
-     * The ID as the primary key holds it. InvalidArgumentException means no row can have the ID,
-     * which ReadQuery::findOrFail() answers as not found; a mapping that cannot address rows by ID
-     * at all throws LogicException.
+     * The ID as the primary key holds it. InvalidArgumentException means the type of the key rejects
+     * the ID, which ReadQuery::findOrFail() answers as not found; a mapping that cannot address rows
+     * by ID at all throws LogicException. What the column holds is known to the server only: an ID
+     * it rejects, such as a number beyond the column's range, stays its error.
      */
     public function id(int|string $id): int|string
     {

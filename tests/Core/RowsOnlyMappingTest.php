@@ -176,7 +176,7 @@ final class RowsOnlyMappingTest extends TestCase
             'products',
             'Reading entities',
         ];
-        yield 'find or fail by an ID no row can have' => [
+        yield 'find or fail by an ID the type of the key rejects' => [
             static fn (Repository $rows, Repository $products, Connection $connection): mixed => (new Repository(
                 $connection,
                 new Mapping('products', ['id' => Types::INTEGER, 'code' => Types::STRING]),

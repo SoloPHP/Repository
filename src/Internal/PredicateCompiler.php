@@ -103,6 +103,9 @@ final class PredicateCompiler
 
         // One EXISTS per target: an owner has a single row of each BelongsTo target
         foreach ($targets as $relation => $conditions) {
+            // PHP keeps a numeric segment such as "1" as an integer key
+            $relation = (string) $relation;
+            $this->assertReadQuery();
             $mapping->requireBelongsTo($relation, 'A criteria path');
             $parts[] = $this->normalizeExists(Filter::related($relation, $conditions), $mapping);
         }
@@ -113,12 +116,7 @@ final class PredicateCompiler
     /** @param Mapping<object> $owner */
     private function normalizeExists(Filter $filter, Mapping $owner): Exists|bool
     {
-        if ($this->fields === null) {
-            throw new InvalidArgumentException(
-                'Related filters and relation paths are supported only for read queries.',
-            );
-        }
-
+        $this->assertReadQuery();
         $relation = $owner->relation($filter->relation);
         $target = $relation->resolve($owner);
         SoftDelete::assertSupported($target, $filter->visibility);
@@ -129,6 +127,16 @@ final class PredicateCompiler
         }
 
         return new Exists($relation, $owner, $target, $criteria === true ? null : $criteria, $filter->visibility);
+    }
+
+    /** Write criteria name base columns only, so a relation is rejected before it is looked up. */
+    private function assertReadQuery(): void
+    {
+        if ($this->fields === null) {
+            throw new InvalidArgumentException(
+                'Related filters and relation paths are supported only for read queries.',
+            );
+        }
     }
 
     /** @param list<Condition|Group|Exists|bool> $parts */
