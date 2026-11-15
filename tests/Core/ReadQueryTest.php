@@ -475,8 +475,9 @@ final class ReadQueryTest extends TestCase
     {
         $connection = $this->getMockBuilder(Connection::class)
             ->disableOriginalConstructor()
-            ->onlyMethods(['getDatabasePlatform', 'executeQuery'])
+            ->onlyMethods(['getConfiguration', 'getDatabasePlatform', 'executeQuery'])
             ->getMock();
+        $connection->method('getConfiguration')->willReturn(new Configuration());
         $connection->method('getDatabasePlatform')->willReturn(new SQLitePlatform());
         $connection->expects(self::once())->method('executeQuery')->willReturn(new Result($driverResult, $connection));
 

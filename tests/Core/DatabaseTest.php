@@ -161,10 +161,10 @@ final class DatabaseTest extends TestCase
             'CREATE TABLE product_tag (product_id INTEGER, tag_id INTEGER, UNIQUE(product_id, tag_id))',
         );
         $connection->executeStatement('INSERT INTO tags VALUES (1), (2)');
-        $repository = new Repository($connection, $this->productMapping());
 
         Deprecation::enableTrackingDeprecations();
         try {
+            $repository = new Repository($connection, $this->productMapping());
             $id = $repository->insertGetId([]);
             $repository->translations()->save($id, 'en', ['name' => 'Chair']);
             $repository->links('tags')->sync($id, [1, 2]);

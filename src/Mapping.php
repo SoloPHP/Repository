@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Solo\Repository;
 
 use Closure;
-use Doctrine\DBAL\Types\Type;
 use Doctrine\DBAL\Types\Types;
 use InvalidArgumentException;
 use LogicException;
@@ -224,7 +223,8 @@ final readonly class Mapping
 
             Identifier::assert($column);
 
-            if (!is_string($type) || !Type::hasType($type)) {
+            // A mapping has no connection to ask which names are types: a Repository resolves them.
+            if (!is_string($type)) {
                 throw new InvalidArgumentException(
                     sprintf('Column "%s" must use a registered DBAL type name.', $column),
                 );

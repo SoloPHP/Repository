@@ -1,6 +1,6 @@
 # Public API reference
 
-This reference describes Solo Repository 1.6: PHP 8.3+, Doctrine DBAL `^4.3`, and the `Solo\Repository` namespace. Relation definitions live in `Solo\Repository\Relations`. See the [design and integration guide](details.md) and `examples/definitions.php` in the source checkout.
+This reference describes Solo Repository 1.6: PHP 8.3+, Doctrine DBAL `^4.6`, and the `Solo\Repository` namespace. Relation definitions live in `Solo\Repository\Relations`. See the [design and integration guide](details.md) and `examples/definitions.php` in the source checkout.
 
 `Repository<T>`, `Mapping<T>` and `ReadQuery<T>` use PHPDoc generics, where `T` is an object. `T` is covariant, so `Repository<Product>` is accepted where `Repository<object>` is expected. Relation definitions are generic over their owner and target models, so static analysis checks every `assign` callback against the target mapping. The runtime checks that hydration and relation assignment return objects; it does not enforce their concrete class. `Mapping`, `ReadQuery`, `TransactionManager`, the configuration objects and the write helpers are `final readonly`; `Repository` is `readonly` and may be extended into a [typed repository](#typed-repositories). Readonly configuration does not make the shared DBAL connection, returned models or objects captured by callbacks immutable.
 
@@ -112,7 +112,7 @@ All constructor settings are public readonly properties; `hydrate` is stored as 
 
 Names in `columns`, criteria, projections, sorting and write data are database column names. A hydrator can convert them to camelCase properties or invoke any application constructor. Names form an allowlist, not SQL expressions. Table names, column names and relation names must match `[A-Za-z_][A-Za-z0-9_]*`; schema-qualified tables are not supported. Identifiers are quoted through DBAL and values are bound separately.
 
-Every base type must be registered with DBAL. Read values are converted through the mapped DBAL type before hydration; `rows()` applies the same conversion. For example, decimal values remain strings, JSON becomes a PHP value, and `datetime_immutable` becomes `DateTimeImmutable`. On writes and comparisons, pass values accepted by that DBAL type. Register custom types in DBAL; types requiring custom SQL conversion wrappers are outside this API.
+Every base type must be a type of the connection: one of its type provider, which holds the built-in DBAL types and those registered globally unless the application set its own with `Configuration::setTypeProvider()`. A mapping is built without a connection, so it only checks that each type is a name; a `Repository` resolves the names when it is constructed and throws `InvalidArgumentException` for one its connection does not have. Read values are converted through the mapped DBAL type before hydration; `rows()` applies the same conversion. For example, decimal values remain strings, JSON becomes a PHP value, and `datetime_immutable` becomes `DateTimeImmutable`. On writes and comparisons, pass values accepted by that DBAL type. Register custom types in DBAL; types requiring custom SQL conversion wrappers are outside this API.
 
 The single primary key must be present in `columns` and use one of:
 

@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Solo\Repository\Tests\Core;
 
-use Doctrine\DBAL\Types\Type;
+use Doctrine\DBAL\Types\StringType;
 use Doctrine\DBAL\Types\Types;
 use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -68,7 +68,7 @@ final class TranslationsMappingTest extends TestCase
         yield 'JSON translation' => [['columns' => ['name' => Types::JSON]]];
         yield 'ASCII translation' => [['columns' => ['name' => Types::ASCII_STRING]]];
         yield 'unknown type' => [['columns' => ['name' => 'repo_unknown_translation_type']]];
-        yield 'type instance' => [['columns' => ['name' => Type::getType(Types::STRING)]]];
+        yield 'type instance' => [['columns' => ['name' => new StringType()]]];
         yield 'null type' => [['columns' => ['name' => null]]];
         yield 'empty default locale' => [['defaultLocale' => '']];
         yield 'blank default locale' => [['defaultLocale' => " \t\n"]];

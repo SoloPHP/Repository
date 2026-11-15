@@ -368,6 +368,7 @@ final class RepositoryTest extends TestCase
     public function testInsertManyRunsABatchThatFitsOneStatementWithoutATransaction(): void
     {
         $connection = $this->createMock(Connection::class);
+        $connection->method('getConfiguration')->willReturn(new Configuration());
         $connection->method('getDatabasePlatform')->willReturn(new PostgreSQLPlatform());
         $connection->expects(self::never())->method('transactional');
         $connection->expects(self::once())->method('executeStatement')->with(
@@ -480,6 +481,7 @@ final class RepositoryTest extends TestCase
         $result->expects(self::once())->method('fetchOne')->willReturn('42');
         $result->expects(self::once())->method('free');
         $connection = $this->createMock(Connection::class);
+        $connection->method('getConfiguration')->willReturn(new Configuration());
         $platform = new PostgreSQLPlatform();
         $connection->method('getDatabasePlatform')->willReturn($platform);
         $connection->expects(self::never())->method('lastInsertId');
@@ -496,6 +498,7 @@ final class RepositoryTest extends TestCase
     public function testMysqlZeroIdIsRejectedBeforeItCanBecomeADifferentGeneratedId(): void
     {
         $connection = $this->createMock(Connection::class);
+        $connection->method('getConfiguration')->willReturn(new Configuration());
         $connection->method('getDatabasePlatform')->willReturn(new MySQLPlatform());
         $connection->expects(self::never())->method('executeStatement');
         $repository = new Repository($connection, $this->mapping());

@@ -33,9 +33,9 @@ The shared suite checks generated IDs and CRUD, decimal/bool/date/JSON conversio
 
 | PHP | DBAL constraint at install |
 |---|---|
-| 8.3 | `4.3.*`, the minimum supported branch |
-| 8.3 | `^4.3`, the latest compatible release |
-| 8.5 | `^4.3`, the latest compatible release |
+| 8.3 | `4.6.*`, the minimum supported branch |
+| 8.3 | `^4.6`, the latest compatible release |
+| 8.5 | `^4.6`, the latest compatible release |
 
 Your own test database needs `REPOSITORY_DATABASE_URL` and the matching `pdo_mysql` or `pdo_pgsql` extension. `mysql://` (MySQL and MariaDB) and `postgresql://` URLs are supported; the database name must end in `_test`. The suite creates and drops its own fixture tables with the `repo_` prefix, so it needs a dedicated test database:
 
@@ -72,7 +72,7 @@ MySQL 8.4, MariaDB 12.3 and PostgreSQL 17 are the verified server platforms. Mar
 
 | Area | Decision |
 |---|---|
-| Foundation | PHP ≥ 8.3, Doctrine DBAL 4.x with 4.3 as the minimum. No other runtime dependencies |
+| Foundation | PHP ≥ 8.3, Doctrine DBAL 4.x with 4.6 as the minimum. No other runtime dependencies |
 | Model | Any object, built by an explicit `hydrate(array): object` function. No base `Entity`, no reflection |
 | Configuration | One immutable `Mapping`: table, column types, key, hydrator and optional features |
 | Reads | `Repository` creates an independent `ReadQuery`; `withLocale()` and `with()` settings are kept |
@@ -125,7 +125,7 @@ Without a primary key there are no translations, and the only possible relation 
 
 `pageOrderKey` names the columns that identify a row of such a table, such as those of its composite key. `page()` ends its orders with them as it ends a keyed mapping's with the primary key; nothing else reads them, so it is not a composite primary key. They are base columns of the mapping, each named once; with a primary key a page order key is rejected. Their uniqueness is guaranteed by the schema, as is a primary key's.
 
-A given primary key must be part of `columns`; a relation's foreign key is part of the `columns` of its side. `generatedId: true` is allowed only for a compatible integer primary key. A mapping is validated at once; the requirements on a lazy target side are checked when the relation is first resolved.
+A given primary key must be part of `columns`; a relation's foreign key is part of the `columns` of its side. `generatedId: true` is allowed only for a compatible integer primary key. A mapping is validated at once, except for what only a connection knows: its type names are resolved by the type provider of the connection when a repository is built. The requirements on a lazy target side are checked when the relation is first resolved.
 
 After a read, values are converted by DBAL before `hydrate` is called. `decimal`, for example, stays a string, and `datetime_immutable` becomes a `DateTimeImmutable`. For writes and comparisons, DBAL gets the type name and converts the value once. An `IN` list, after each element is checked, is converted by the field type into database values and bound as one DBAL list parameter, which DBAL expands at execution; a type without a list binding, such as boolean, binds each element separately. Every value of a list counts toward the parameter budget. Custom types are registered in DBAL; there is no second registry of codecs. Types that need special SQL wrappers are not part of the first contract.
 
@@ -374,7 +374,7 @@ This is not a server-side cursor and not a snapshot under concurrent changes. Fo
 
 ## Platforms and errors
 
-The verified matrix is PostgreSQL 17 (`pdo_pgsql`), MySQL 8.4 and MariaDB 12.3 (`pdo_mysql`) and SQLite (`pdo_sqlite`). CI checks the minimum DBAL 4.3 branch and the latest compatible release. MariaDB is handled as MySQL; SQL Server and other platforms are not declared compatible just because DBAL has a driver for them, and compatibility with older server versions is not claimed.
+The verified matrix is PostgreSQL 17 (`pdo_pgsql`), MySQL 8.4 and MariaDB 12.3 (`pdo_mysql`) and SQLite (`pdo_sqlite`). CI checks the minimum DBAL 4.6 branch and the latest compatible release. MariaDB is handled as MySQL; SQL Server and other platforms are not declared compatible just because DBAL has a driver for them, and compatibility with older server versions is not claimed.
 
 The SQL builder, quoting, parameters, types and transactions are delegated to DBAL. Narrow operations without a suitable common API check the platform explicitly: generated IDs, upserts and the LIKE escape character. There is no "treat everything unknown as PostgreSQL" branch and no general INSERT IGNORE that would hide unrelated constraint violations.
 
@@ -388,4 +388,4 @@ For a catalog with category and tags within one batch, the tests check 4 SELECTs
 
 ## Built on DBAL
 
-The design builds on existing DBAL APIs: [QueryBuilder](https://www.doctrine-project.org/projects/doctrine-dbal/en/4.3/reference/query-builder.html), [parameters and data retrieval](https://www.doctrine-project.org/projects/doctrine-dbal/en/4.3/reference/data-retrieval-and-manipulation.html), [types](https://www.doctrine-project.org/projects/doctrine-dbal/en/4.3/reference/types.html) and [transactions](https://www.doctrine-project.org/projects/doctrine-dbal/en/4.3/reference/transactions.html). The minimum supported and the current DBAL 4.x releases are both checked.
+The design builds on existing DBAL APIs: [QueryBuilder](https://www.doctrine-project.org/projects/doctrine-dbal/en/4.6/reference/query-builder.html), [parameters and data retrieval](https://www.doctrine-project.org/projects/doctrine-dbal/en/4.6/reference/data-retrieval-and-manipulation.html), [types](https://www.doctrine-project.org/projects/doctrine-dbal/en/4.6/reference/types.html) and [transactions](https://www.doctrine-project.org/projects/doctrine-dbal/en/4.6/reference/transactions.html). The minimum supported and the current DBAL 4.x releases are both checked.

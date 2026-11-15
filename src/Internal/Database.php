@@ -11,7 +11,7 @@ use Doctrine\DBAL\Platforms\AbstractPlatform;
 use Doctrine\DBAL\Platforms\MySQLPlatform;
 use Doctrine\DBAL\Query\QueryBuilder;
 use Doctrine\DBAL\Result;
-use Doctrine\DBAL\Types\Type;
+use Doctrine\DBAL\Types\TypeProvider;
 use InvalidArgumentException;
 use LogicException;
 
@@ -57,6 +57,12 @@ final class Database
             ?? throw new LogicException($feature . ' are supported only on PostgreSQL, MySQL and SQLite.');
     }
 
+    /** The types of the connection, which a mapping names its column types by. */
+    public function types(): TypeProvider
+    {
+        return $this->connection->getConfiguration()->getTypeProvider();
+    }
+
     /**
      * Bound parameters allowed in one statement.
      *
@@ -97,7 +103,7 @@ final class Database
      */
     public function listParameter(string $type, array $values): ?array
     {
-        $dbalType = Type::getType($type);
+        $dbalType = $this->types()->get($type);
         $listType = match ($dbalType->getBindingType()) {
             ParameterType::INTEGER => ArrayParameterType::INTEGER,
             ParameterType::STRING => ArrayParameterType::STRING,

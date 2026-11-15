@@ -6,7 +6,9 @@ namespace Solo\Repository\Tests\Core;
 
 use Closure;
 use DateTimeImmutable;
-use Doctrine\DBAL\Types\Type;
+use Doctrine\DBAL\Configuration;
+use Doctrine\DBAL\Types\IntegerType;
+use Doctrine\DBAL\Types\TypeRegistry;
 use Doctrine\DBAL\Types\Types;
 use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -60,8 +62,7 @@ final class MappingTest extends TestCase
         yield 'SQL in table' => [['table' => 'products; DROP TABLE products']];
         yield 'invalid column' => [['columns' => ['id' => Types::INTEGER, 'a.b' => Types::STRING]]];
         yield 'numeric column key' => [['columns' => [Types::INTEGER]]];
-        yield 'unregistered type' => [['columns' => ['id' => Types::INTEGER, 'name' => 'repo_missing_type']]];
-        yield 'type object instead of name' => [['columns' => ['id' => Type::getType(Types::INTEGER)]]];
+        yield 'type object instead of name' => [['columns' => ['id' => new IntegerType()]]];
         yield 'missing primary key' => [['columns' => ['name' => Types::STRING]]];
         yield 'invalid primary key name' => [['primaryKey' => 'id DESC']];
         yield 'unsupported primary key type' => [['columns' => ['id' => Types::JSON], 'generatedId' => false]];
@@ -151,21 +152,26 @@ final class MappingTest extends TestCase
 
     public function testCustomDbalTypeIsAppliedBeforeHydration(): void
     {
-        $typeName = 'repo_mapping_value_object';
-        if (!Type::hasType($typeName)) {
-            Type::addType($typeName, MappingValueType::class);
-        }
+        $types = new TypeRegistry(['repo_mapping_value_object' => MappingValueType::class]);
 
         $mapper = SqliteRowMapper::for($this->mapping([
             'id' => Types::INTEGER,
-            'code' => $typeName,
-        ]));
+            'code' => 'repo_mapping_value_object',
+        ]), (new Configuration())->setTypeProvider($types));
 
         $product = $mapper->hydrate($mapper->convert(['id' => '1', 'code' => 'SKU-001']));
 
         self::assertInstanceOf(MappingValue::class, $product->code);
         self::assertSame('SKU-001', $product->code->value);
         self::assertSame(['code' => null], $mapper->convert(['code' => null]));
+    }
+
+    public function testATypeNameTheConnectionDoesNotHaveIsRejectedWhenItIsResolved(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('Column "name" must use a registered DBAL type name.');
+
+        SqliteRowMapper::for($this->mapping(['id' => Types::INTEGER, 'name' => 'repo_missing_type']));
     }
 
     public function testNonObjectHydratorResultIsRejected(): void

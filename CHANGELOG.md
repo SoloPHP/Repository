@@ -13,6 +13,19 @@
   direction; the others follow in the direction of its last field.
   See [Pages](https://solophp.github.io/Repository/guide/api#pages).
 
+### Behavior changes
+
+- The types of a mapping are those of the connection's type provider, which DBAL 4.6
+  gives every connection in place of the static type registry it deprecates. A type set
+  with `Configuration::setTypeProvider()` is used, and no deprecated DBAL API is called.
+- A type name the connection does not have is rejected with `InvalidArgumentException`
+  when a `Repository` is built for the mapping, where `Mapping` rejected it before: a
+  mapping has no connection to ask.
+
+### Requirements
+
+- Doctrine DBAL ^4.6, where it was ^4.3.
+
 ## 1.5.0 — 2026-11-10
 
 ### Features

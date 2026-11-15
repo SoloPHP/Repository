@@ -685,6 +685,7 @@ final class TranslationStoreTest extends TestCase
     private function mockConnection(AbstractPlatform $platform): Connection
     {
         $connection = $this->createMock(Connection::class);
+        $connection->method('getConfiguration')->willReturn(new Configuration());
         $connection->method('getDatabasePlatform')->willReturn($platform);
 
         return $connection;

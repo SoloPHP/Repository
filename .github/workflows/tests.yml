@@ -15,11 +15,11 @@ jobs:
       matrix:
         include:
           - php: '8.3'
-            dbal: '4.3.*'
+            dbal: '4.6.*'
           - php: '8.3'
-            dbal: '^4.3'
+            dbal: '^4.6'
           - php: '8.5'
-            dbal: '^4.3'
+            dbal: '^4.6'
     steps:
       - uses: actions/checkout@v5
       - uses: shivammathur/setup-php@v2
@@ -43,11 +43,11 @@ jobs:
       matrix:
         runtime:
           - php: '8.3'
-            dbal: '4.3.*'
+            dbal: '4.6.*'
           - php: '8.3'
-            dbal: '^4.3'
+            dbal: '^4.6'
           - php: '8.5'
-            dbal: '^4.3'
+            dbal: '^4.6'
         database:
           - engine: MySQL 8.4
             image: mysql:8.4

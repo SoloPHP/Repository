@@ -12,7 +12,7 @@ Typed PHP repositories on Doctrine DBAL. Map a table to your own objects, read t
 composer require solophp/repository
 ```
 
-Requires PHP 8.3+, Doctrine DBAL ^4.3 and the PDO driver of your database. Tested on MySQL 8.4, MariaDB 12.3, PostgreSQL 17 and SQLite.
+Requires PHP 8.3+, Doctrine DBAL ^4.6 and the PDO driver of your database. Tested on MySQL 8.4, MariaDB 12.3, PostgreSQL 17 and SQLite.
 
 ## Example
 

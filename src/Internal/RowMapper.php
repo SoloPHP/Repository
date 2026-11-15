@@ -26,14 +26,20 @@ final readonly class RowMapper
     /** @param Mapping<T> $mapping */
     public function __construct(private Mapping $mapping, private Database $db)
     {
+        $known = $db->types();
         $types = [];
         foreach ($mapping->readColumns() as $column => $type) {
-            $types[$column] = Type::getType($type);
+            if (!$known->has($type)) {
+                throw new InvalidArgumentException(
+                    sprintf('Column "%s" must use a registered DBAL type name.', $column),
+                );
+            }
+            $types[$column] = $known->get($type);
         }
         $this->types = $types;
 
         $type = $mapping->primaryKey === null ? null : $mapping->columnType($mapping->primaryKey);
-        $this->idType = $type === null ? null : Type::getType($type);
+        $this->idType = $type === null ? null : $known->get($type);
         $this->keyType = $type === null
             ? null
             : KeyType::of($type) ?? throw new UnexpectedValueException('Unsupported primary key type.');

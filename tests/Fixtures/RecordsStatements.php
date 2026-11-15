@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Solo\Repository\Tests\Fixtures;
 
 use ArrayObject;
+use Doctrine\DBAL\Configuration;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\Platforms\AbstractPlatform;
 use Doctrine\DBAL\Query\QueryBuilder;
@@ -24,6 +25,7 @@ trait RecordsStatements
     {
         $statements = new ArrayObject();
         $connection = $this->createStub(Connection::class);
+        $connection->method('getConfiguration')->willReturn(new Configuration());
         $connection->method('getDatabasePlatform')->willReturn($platform);
         $connection->method('isTransactionActive')->willReturn(true);
         $connection->method('createQueryBuilder')->willReturnCallback(
