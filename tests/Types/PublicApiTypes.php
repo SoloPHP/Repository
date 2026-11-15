@@ -89,6 +89,7 @@ function pagesKeepTheTypeOfTheirItems(Repository $products, array $names): void
     assertType('Solo\Repository\Page<int>', $page->map(static fn (Product $product): int => 1));
     assertType('Solo\Repository\Page<string>', Page::of($names, new PageRequest(2, 20), static fn (): int => 21));
     assertType("array<string, 'ASC'|'DESC'>", (new PageRequest(1, 20))->orderEndingWith('id'));
+    assertType("array<string, 'ASC'|'DESC'>", (new PageRequest(1, 20))->orderEndingWith('product_id', 'category_id'));
 }
 
 function relationsAcceptTypedAssignCallbacks(Connection $connection): void
@@ -158,8 +159,10 @@ function mappingsWithoutAHydratorReadRows(Connection $connection): void
         table: 'product_categories',
         columns: ['product_id' => Types::INTEGER, 'category_id' => Types::INTEGER],
         primaryKey: null,
+        pageOrderKey: ['product_id', 'category_id'],
     );
     assertType('Solo\Repository\Mapping<object>', $links);
+    assertType('list<string>', $links->pageOrderKey);
 
     $repository = new Repository($connection, $links);
     assertType('list<array<string, mixed>>', $repository->read()->rows(['category_id'], ['product_id IN' => [1, 2]]));

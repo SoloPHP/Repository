@@ -105,11 +105,46 @@ final class PageTest extends TestCase
         ];
     }
 
-    public function testTheKeyThatEndsAnOrderMustBeAField(): void
+    /**
+     * @param array<string, string> $orderBy
+     * @param array<string, string> $expected
+     */
+    #[DataProvider('ordersEndedByAKeyOfSeveralColumns')]
+    public function testAKeyOfSeveralColumnsEndsTheOrderColumnByColumn(array $orderBy, array $expected): void
+    {
+        self::assertSame($expected, (new PageRequest(1, 10, $orderBy))->orderEndingWith('product_id', 'store_id'));
+    }
+
+    public static function ordersEndedByAKeyOfSeveralColumns(): iterable
+    {
+        yield 'no order' => [[], ['product_id' => 'ASC', 'store_id' => 'ASC']];
+        yield 'descending last' => [
+            ['stock' => 'DESC'],
+            ['stock' => 'DESC', 'product_id' => 'DESC', 'store_id' => 'DESC'],
+        ];
+        yield 'an order naming one of them' => [
+            ['store_id' => 'DESC', 'stock' => 'ASC'],
+            ['store_id' => 'DESC', 'stock' => 'ASC', 'product_id' => 'ASC'],
+        ];
+        yield 'an order naming them all' => [
+            ['store_id' => 'ASC', 'product_id' => 'DESC'],
+            ['store_id' => 'ASC', 'product_id' => 'DESC'],
+        ];
+    }
+
+    /** @param list<string> $key */
+    #[DataProvider('keysThatAreNotFields')]
+    public function testTheKeyThatEndsAnOrderMustBeAField(array $key): void
     {
         $this->expectException(InvalidArgumentException::class);
 
-        (new PageRequest(1, 10))->orderEndingWith('id; DROP TABLE items');
+        (new PageRequest(1, 10))->orderEndingWith(...$key);
+    }
+
+    public static function keysThatAreNotFields(): iterable
+    {
+        yield 'one column' => [['id; DROP TABLE items']];
+        yield 'a later column' => [['product_id', 'store_id DESC']];
     }
 
     /** @param array<mixed> $items */

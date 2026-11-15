@@ -36,6 +36,10 @@ final readonly class Mapping
      * @param string|null $primaryKey NULL for a table without a single-column key, such as one with a
      *                                composite key; its rows are then read and changed by criteria only.
      * @param array<string, Relation> $relations
+     * @param list<string> $pageOrderKey The columns that identify a row of a table without a primary
+     *                                   key, such as those of its composite key, which ReadQuery::page()
+     *                                   ends orders with as it ends a keyed mapping's with the primary
+     *                                   key. Nothing else reads them: rows are still not addressed by them.
      */
     public function __construct(
         public string $table,
@@ -46,6 +50,7 @@ final readonly class Mapping
         public ?string $softDeleteColumn = null,
         public ?Translations $translations = null,
         public array $relations = [],
+        public array $pageOrderKey = [],
     ) {
         Identifier::assert($table);
         if ($primaryKey !== null) {
@@ -63,6 +68,7 @@ final readonly class Mapping
         } elseif ($translations !== null) {
             throw new InvalidArgumentException('Translations require a primary key.');
         }
+        $this->validatePageOrderKey($pageOrderKey);
         $this->generatedId = $primaryKey !== null && $generatedId;
 
         if ($softDeleteColumn !== null) {
@@ -182,6 +188,29 @@ final readonly class Mapping
 
         if ($generatedId && $keyType !== KeyType::Integer) {
             throw new InvalidArgumentException('Generated IDs require a smallint, integer or bigint primary key.');
+        }
+    }
+
+    /** @param array<mixed> $pageOrderKey */
+    private function validatePageOrderKey(array $pageOrderKey): void
+    {
+        if ($pageOrderKey === []) {
+            return;
+        }
+        if ($this->primaryKey !== null) {
+            throw new InvalidArgumentException('Only a mapping without a primary key takes a page order key.');
+        }
+        if (!array_is_list($pageOrderKey)) {
+            throw new InvalidArgumentException('A page order key must list column names.');
+        }
+        foreach ($pageOrderKey as $column) {
+            if (!is_string($column)) {
+                throw new InvalidArgumentException('A page order key must list column names.');
+            }
+            $this->columnType($column);
+        }
+        if (count(array_unique($pageOrderKey)) !== count($pageOrderKey)) {
+            throw new InvalidArgumentException('A page order key must name each column once.');
         }
     }
 

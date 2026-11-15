@@ -46,20 +46,27 @@ final readonly class PageRequest
     }
 
     /**
-     * The order ended by $key in the direction of its last field, or ascending when there is
+     * The order ended by the key in the direction of its last field, or ascending when there is
      * none, so rows that tie on every requested field keep their pages from one read to the
-     * next; an order that already names the key comes back as it is. ReadQuery::page() ends it
-     * with the primary key, and a query of its own SQL can end it with the name of its key.
+     * next. A key of several columns, such as a composite key, ends it column by column, and a
+     * column the order already names keeps its place and direction. ReadQuery::page() ends it
+     * with the primary key or the page order key of the mapping, and a query of its own SQL can end
+     * it with the names of its key.
      *
      * @return array<string, 'ASC'|'DESC'>
      */
-    public function orderEndingWith(string $key): array
+    public function orderEndingWith(string $key, string ...$keys): array
     {
-        if (!Identifier::isPath($key)) {
-            throw new InvalidArgumentException('An order key must be a field name or a relation path to a field.');
-        }
         $orderBy = $this->orderBy;
-        $orderBy[$key] ??= $orderBy === [] ? 'ASC' : $orderBy[array_key_last($orderBy)];
+        $direction = $orderBy === [] ? 'ASC' : $orderBy[array_key_last($orderBy)];
+        foreach ([$key, ...$keys] as $column) {
+            if (!Identifier::isPath($column)) {
+                throw new InvalidArgumentException(
+                    'An order key must be a field name or a relation path to a field.',
+                );
+            }
+            $orderBy[$column] ??= $direction;
+        }
 
         return $orderBy;
     }

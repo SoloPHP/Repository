@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.6.0 — 2026-11-15
+
+### Features
+
+- `Mapping` takes a `pageOrderKey`: the columns that identify a row of a table without a
+  primary key, such as those of its composite key. `ReadQuery::page()` ends its orders
+  with them as it ends a keyed mapping's with the primary key, so ties keep their pages
+  there too. Nothing else reads them, and a mapping with a primary key rejects one.
+- `PageRequest::orderEndingWith()` takes several columns, for a read of its own SQL that
+  pages by a composite key. A column the order already names keeps its place and
+  direction; the others follow in the direction of its last field.
+  See [Pages](https://solophp.github.io/Repository/guide/api#pages).
+
 ## 1.5.0 — 2026-11-10
 
 ### Features

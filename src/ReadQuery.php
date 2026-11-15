@@ -169,10 +169,10 @@ final readonly class ReadQuery
 
     /**
      * One page of the matching entities and the number of them on all pages: read in the
-     * request's order ended by the primary key (PageRequest::orderEndingWith()), and counted by
-     * count() only when the rows cannot tell the total (Page::of()). A mapping without a primary
-     * key needs an order of its own, unique for stable pages. A locking read throws
-     * LogicException, since the count would not lock what it counts.
+     * request's order ended by the primary key, or by the page order key of a mapping without one
+     * (PageRequest::orderEndingWith()), and counted by count() only when the rows cannot tell the
+     * total (Page::of()). A mapping with neither needs an order of its own, unique for stable
+     * pages. A locking read throws LogicException, since the count would not lock what it counts.
      *
      * @param array<string, mixed>|Filter $criteria
      * @return Page<T>
@@ -381,15 +381,16 @@ final readonly class ReadQuery
     /** @return array<string, 'ASC'|'DESC'> */
     private function pageOrder(PageRequest $request): array
     {
-        $key = $this->mapping->primaryKey;
-        if ($key !== null) {
-            return $request->orderEndingWith($key);
+        $key = $this->mapping->primaryKey === null ? $this->mapping->pageOrderKey : [$this->mapping->primaryKey];
+        if ($key !== []) {
+            return $request->orderEndingWith(...$key);
         }
         if ($request->orderBy === []) {
             // Without an order the database picks one per statement, and pages overlap.
-            throw new InvalidArgumentException(
-                sprintf('Pages of mapping "%s" need an order: it has no primary key.', $this->mapping->table),
-            );
+            throw new InvalidArgumentException(sprintf(
+                'Pages of mapping "%s" need an order: it has neither a primary key nor a page order key.',
+                $this->mapping->table,
+            ));
         }
 
         return $request->orderBy;

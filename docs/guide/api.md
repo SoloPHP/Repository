@@ -1,6 +1,6 @@
 # Public API reference
 
-This reference describes Solo Repository 1.5: PHP 8.3+, Doctrine DBAL `^4.3`, and the `Solo\Repository` namespace. Relation definitions live in `Solo\Repository\Relations`. See the [design and integration guide](details.md) and `examples/definitions.php` in the source checkout.
+This reference describes Solo Repository 1.6: PHP 8.3+, Doctrine DBAL `^4.3`, and the `Solo\Repository` namespace. Relation definitions live in `Solo\Repository\Relations`. See the [design and integration guide](details.md) and `examples/definitions.php` in the source checkout.
 
 `Repository<T>`, `Mapping<T>` and `ReadQuery<T>` use PHPDoc generics, where `T` is an object. `T` is covariant, so `Repository<Product>` is accepted where `Repository<object>` is expected. Relation definitions are generic over their owner and target models, so static analysis checks every `assign` callback against the target mapping. The runtime checks that hydration and relation assignment return objects; it does not enforce their concrete class. `Mapping`, `ReadQuery`, `TransactionManager`, the configuration objects and the write helpers are `final readonly`; `Repository` is `readonly` and may be extended into a [typed repository](#typed-repositories). Readonly configuration does not make the shared DBAL connection, returned models or objects captured by callbacks immutable.
 
@@ -99,6 +99,7 @@ Mapping::__construct(
     ?string $softDeleteColumn = null,
     ?Translations $translations = null,
     array $relations = [],         // array<string, Relations\Relation>
+    array $pageOrderKey = [],      // list<string>: what ends page orders without a primary key
 );
 
 Mapping::columnType(string $column): string;
@@ -125,6 +126,8 @@ Methods with a separate ID argument and explicit primary keys in insert data nor
 Set `primaryKey: null` for a table without a single-column key, such as one with a composite key. Its rows are read, inserted and changed through criteria: `findBy()`, `rows()`, `count()`, the aggregates, `queryBuilder()`, `insert()`, `insertMany()`, `updateBy()`, `deleteBy()` and `purgeBy()`. Operations that address one row by ID (`find()`, `insertGetId()`, `update()`, `delete()`, `restore()`, `purge()` and `lockForUpdate()`) throw `LogicException` before SQL, and `iterateById()` throws `InvalidArgumentException`. Such a mapping has no generated ID, and every inserted row needs at least one column.
 
 A mapping without a primary key cannot have translations, and its only relations are `BelongsTo`: `HasOne`, `HasMany` and `BelongsToMany` match their owner by its primary key. It can be the target of `HasOne` and `HasMany`, but not of `BelongsTo` or `BelongsToMany`, which reference the target's primary key. Its `BelongsTo` relations can be filtered by with any key type; loading one needs an integer target key, because string keys follow the database collation and are matched in SQL through the owner's primary key. Loading a string-key `BelongsTo` from such an owner throws `LogicException` before SQL.
+
+`pageOrderKey` names the columns that identify a row of such a table, such as those of its composite key: `primaryKey: null, pageOrderKey: ['product_id', 'store_id']`. `page()` ends its orders with them as it ends a keyed mapping's with the primary key, so its ties keep their pages too (see [Pages](#pages)). That is all they do: rows are still not found, changed or iterated by them, and no relation references them. They must be base columns of the mapping, each named once, and a mapping with a primary key rejects a page order key. That no two rows share their values is the schema's guarantee, as it is for a primary key: a composite primary key or a unique index over NOT NULL columns.
 
 Criteria values of integer fields follow the same rule without being converted: `findBy(['id' => '12x'])` throws instead of matching 12. See [Criteria and Filter](#criteria-and-filter) for the other field types.
 
@@ -211,7 +214,7 @@ This is neither a server cursor nor a snapshot. Use application transaction/isol
 ```php
 PageRequest::__construct(int $page, int $perPage, array $orderBy = []);
 PageRequest::offset(): int;                           // rows on the pages before this one
-PageRequest::orderEndingWith(string $key): array;     // the order ended by $key
+PageRequest::orderEndingWith(string $key, string ...$keys): array;  // the order ended by the key
 
 Page::__construct(array $items, int $total, PageRequest $request);   // Page<T>, items list<T>
 Page::of(array $items, PageRequest $request, Closure $count): Page;  // Page<U>
@@ -222,11 +225,11 @@ A `PageRequest` names a page by its number, counted from 1, its size and the ord
 
 `page()` reads one page of entities with `findBy()` and the number of matching rows on all pages:
 
-- The order is the request's, ended by the primary key in the direction of its last field (`orderEndingWith()`), so rows that tie on every requested field fall on the same pages on every read: `['created_at' => 'DESC']` reads `created_at DESC, id DESC`, and a request without an order reads in key order. An order that already names the key is read as requested. A mapping without a primary key is read in the request's order alone, which must then be unique; a request without an order is rejected for it before SQL. MySQL and MariaDB keep the primary key in every secondary index, so the appended key costs nothing there; on PostgreSQL an index on `(created_at, id)` rather than `(created_at)` alone keeps such pages index-ordered when many rows share a value.
+- The order is the request's, ended by the primary key in the direction of its last field (`orderEndingWith()`), so rows that tie on every requested field fall on the same pages on every read: `['created_at' => 'DESC']` reads `created_at DESC, id DESC`, and a request without an order reads in key order. An order that already names the key is read as requested. A mapping without a primary key ends it with its `pageOrderKey` the same way, column by column: `['quantity' => 'DESC']` reads `quantity DESC, product_id DESC, store_id DESC`, and a column the order already names keeps its place and direction. Without a page order key it is read in the request's order alone, which must then be unique, and a request without an order is rejected for it before SQL. MySQL and MariaDB keep the primary key in every secondary index, so the appended key costs nothing there; on PostgreSQL an index on `(created_at, id)` rather than `(created_at)` alone keeps such pages index-ordered when many rows share a value.
 - The rows tell the total when they end before the page does, so a short page runs no count. A full page, or an empty one past the end, runs `count()` over the same criteria, visibility and locale. The two statements share no snapshot: a write between them can make the total disagree with the rows; where that matters, read the page in a transaction at REPEATABLE READ or above.
 - Visibility, locale and includes apply as in `findBy()`, and unknown fields and invalid criteria are rejected before SQL. A locking read throws `LogicException`, since the count would not lock what it counts.
 
-A page keeps the request it was read for in `$request`, so `$page->request->page` and `$page->request->perPage` describe its position. `Page::of()` builds the same result for rows read with the request's offset and size by other means, such as custom SQL, and calls `$count` on the same rule; such a read takes its order from `orderEndingWith()` with the name of its own key, so its ties fall the way `page()` breaks them. Pass the rows exactly as the read returned them: a row dropped afterwards shortens the page, which then reports a total below the real one. `map()` replaces the items, for example with what a response shows, and keeps the total and the request. A page rejects items that are not a list, more items than its size and a negative total.
+A page keeps the request it was read for in `$request`, so `$page->request->page` and `$page->request->perPage` describe its position. `Page::of()` builds the same result for rows read with the request's offset and size by other means, such as custom SQL, and calls `$count` on the same rule; such a read takes its order from `orderEndingWith()` with the names of its own key, one or several columns, so its ties fall the way `page()` breaks them. Pass the rows exactly as the read returned them: a row dropped afterwards shortens the page, which then reports a total below the real one. `map()` replaces the items, for example with what a response shows, and keeps the total and the request. A page rejects items that are not a list, more items than its size and a negative total.
 
 ```php
 use Solo\Repository\PageRequest;

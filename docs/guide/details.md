@@ -81,7 +81,7 @@ MySQL 8.4, MariaDB 12.3 and PostgreSQL 17 are the verified server platforms. Mar
 | Relations | Explicit definitions and assign functions; batch loading instead of queries from objects |
 | Complex SQL | A real DBAL `QueryBuilder`: `ReadQuery::queryBuilder()` with the mapping's criteria, or the application's own `Connection` |
 
-Not part of 1.2: unit of work, identity map, lazy proxies, dirty tracking, cascading graph saves, schema generation, query cache, event bus, advisory locks, a container of its own and separate Composer packages. The application defines business operations, transactions across several repositories and retry rules.
+Not part of the package: unit of work, identity map, lazy proxies, dirty tracking, cascading graph saves, schema generation, query cache, event bus, advisory locks, a container of its own and separate Composer packages. The application defines business operations, transactions across several repositories and retry rules.
 
 ## Structure
 
@@ -121,7 +121,9 @@ The package has no SQL AST of its own, no dialect engine and no public `select/f
 
 One `int|string` primary key is supported, or none. `primaryKey: null` describes a table without a single-column key, for example with a composite key: its rows are read, inserted and changed by criteria (`findBy`, `rows`, `count`, aggregates, `queryBuilder`, `insert`, `insertMany`, `updateBy`, `deleteBy`, `purgeBy`). Operations by ID (`find`, `insertGetId`, `update`, `delete`, `restore`, `purge`, `lockForUpdate`) throw `LogicException`, and `iterateById` throws `InvalidArgumentException`, all before SQL. Such a table has no generated ID, and an inserted row has at least one column.
 
-Without a primary key there are no translations, and the only possible relation is `BelongsTo`: `HasOne`, `HasMany` and `BelongsToMany` find their owner by its key. `HasOne` and `HasMany` can load such a table, but `BelongsTo` and `BelongsToMany` cannot, since they reference the target's key. `Filter::related` through its `BelongsTo` works with any key type, while loading needs an integer target key: string keys are compared in SQL by the database collation, through the owner's primary key. Addressing a row by a composite key and relations over alternative unique keys are outside 1.2. The hydrator gets every declared base and translated column, not `SELECT *`.
+Without a primary key there are no translations, and the only possible relation is `BelongsTo`: `HasOne`, `HasMany` and `BelongsToMany` find their owner by its key. `HasOne` and `HasMany` can load such a table, but `BelongsTo` and `BelongsToMany` cannot, since they reference the target's key. `Filter::related` through its `BelongsTo` works with any key type, while loading needs an integer target key: string keys are compared in SQL by the database collation, through the owner's primary key. Addressing a row by a composite key and relations over alternative unique keys are not supported. The hydrator gets every declared base and translated column, not `SELECT *`.
+
+`pageOrderKey` names the columns that identify a row of such a table, such as those of its composite key. `page()` ends its orders with them as it ends a keyed mapping's with the primary key; nothing else reads them, so it is not a composite primary key. They are base columns of the mapping, each named once; with a primary key a page order key is rejected. Their uniqueness is guaranteed by the schema, as is a primary key's.
 
 A given primary key must be part of `columns`; a relation's foreign key is part of the `columns` of its side. `generatedId: true` is allowed only for a compatible integer primary key. A mapping is validated at once; the requirements on a lazy target side are checked when the relation is first resolved.
 
@@ -186,7 +188,7 @@ Every `with*` returns a new object. Terminal methods do not reset the settings: 
 
 Without `orderBy` the order is undefined. For a stable page, the application ends the ordering with a unique key. Negative limits and offsets and unknown sort directions are rejected; `limit: 0` returns an empty list. `findBy()` collections are materialized in full within the given limit.
 
-`page()` reads one page with `findBy()` and its total with `count()`, over the same criteria, visibility and locale. It ends the requested order with the primary key, so ties keep their pages; it counts only when the page cannot tell the total, and a locking read rejects it. The rules, including those for mappings without a primary key and for `Page::of()` over custom SQL, are in [Pages](api.md#pages).
+`page()` reads one page with `findBy()` and its total with `count()`, over the same criteria, visibility and locale. It ends the requested order with the primary key, or with the `pageOrderKey` of a mapping without one, so ties keep their pages; it counts only when the page cannot tell the total, and a locking read rejects it. The rules, including those for mappings without a primary key and for `Page::of()` over custom SQL, are in [Pages](api.md#pages).
 
 An `orderBy` key of `findBy`, `findOneBy` and `rows` can be a path through `BelongsTo` relations to a field of the target: `['category.name' => 'ASC']`, `['category.parent.name' => 'DESC']`. Each target of a path is LEFT JOINed by its primary key once per statement, over the rows a load of the same relation in this read sees: the active ones, unless the read loads the relation with another visibility. A list that shows soft-deleted categories through `with([new Load('category', visibility: Visibility::All)])` is therefore also sorted by their names; only the load's visibility is taken, not its criteria. A row with an empty, dangling or invisible reference sorts as a row with NULL in that field, and the database decides where NULL goes (first in ascending order on MySQL, MariaDB and SQLite, last on PostgreSQL). A translated target field is read in the query's locale and fallback, which the target inherits as a relation load does. Paths through `HasOne`, `HasMany` and `BelongsToMany` could yield several rows and are rejected before SQL. The default order of a to-many relation and the order of a `Load` take the same paths, from the target's mapping.
 
@@ -252,7 +254,7 @@ Fallback is thus `COALESCE(primary.field, fallback.field)`, chosen independently
 
 One `FieldResolver` serves the projection, WHERE, ORDER BY and conditions inside relations. A filter on `name` checks exactly the value with fallback that will be shown.
 
-The effective language pair of the root read is inherited by relations and relation predicates. When the root has neither `withLocale()` nor `defaultLocale`, in each branch the first translated entity with a `defaultLocale` applies it, and it is inherited from there; translated entities above it read NULL in their translated fields. For one language across the whole graph, set `withLocale()` on the root, even if the root itself is not translated. A per-load language override is not part of 1.2.
+The effective language pair of the root read is inherited by relations and relation predicates. When the root has neither `withLocale()` nor `defaultLocale`, in each branch the first translated entity with a `defaultLocale` applies it, and it is inherited from there; translated entities above it read NULL in their translated fields. For one language across the whole graph, set `withLocale()` on the root, even if the root itself is not translated. A per-load language override is not supported.
 
 When a model is read from a translated repository with `defaultLocale`, that language means a JOIN by default. `rows`, `count` and `exists` add a translation JOIN only when their fields or filters need it. Unlocalized physical rows can be read directly through DBAL; there is no separate `withoutLocale()`.
 
@@ -301,7 +303,7 @@ Integer keys are compared by value: a `BelongsTo` target is selected by the uniq
 
 The batch unit of many-to-many is the owners. The target SELECT is limited by an EXISTS over the pivot and the batch of owner IDs, not by a list of all target IDs. All targets of one owner are sorted in one SQL query; the loader walks that result in database order and distributes it through the pivot. Concatenating independently sorted target chunks, or sorting in PHP instead of by the database collation, is not used.
 
-Owners are selected and limited before collections are loaded. Results are matched by typed row keys. A non-empty `Load.orderBy` sets the order of each collection's items; without it the order is not guaranteed. `HasOne` requires the foreign key to be unique in the target table; several matches are a data error. A limit per parent, lazy loading, cross-connection relations and automatic cascades are not part of 1.2.
+Owners are selected and limited before collections are loaded. Results are matched by typed row keys. A non-empty `Load.orderBy` sets the order of each collection's items; without it the order is not guaranteed. `HasOne` requires the foreign key to be unique in the target table; several matches are a data error. A limit per parent, lazy loading, cross-connection relations and automatic cascades are not supported.
 
 Relations that were not loaded stay as the hydrator left them. A loaded to-one without a visible target is assigned as NULL. One PHP instance per row across queries is not guaranteed.
 

@@ -437,6 +437,45 @@ final class RepositoryDatabaseTest extends DatabaseTestCase
         self::assertSame([['a'], 5], [array_column($all->items, 'sku'), $all->total]);
     }
 
+    public function testPagesOfATableWithoutAPrimaryKeyBreakTiesByItsPageOrderKeyOnTheServer(): void
+    {
+        $schema = new Schema();
+        $stocks = $schema->createTable('repo_repository_stocks');
+        $stocks->addColumn('product_id', Types::INTEGER);
+        $stocks->addColumn('store_code', Types::STRING, ['length' => 8]);
+        $stocks->addColumn('quantity', Types::INTEGER);
+        $stocks->setPrimaryKey(['product_id', 'store_code']);
+        $this->createSchema($schema);
+        $repository = new Repository($this->connection, new Mapping(
+            table: 'repo_repository_stocks',
+            columns: ['product_id' => Types::INTEGER, 'store_code' => Types::STRING, 'quantity' => Types::INTEGER],
+            hydrate: static fn(array $row): object => (object) $row,
+            primaryKey: null,
+            pageOrderKey: ['product_id', 'store_code'],
+        ));
+        $repository->insertMany([
+            ['product_id' => 1, 'store_code' => 'north', 'quantity' => 5],
+            ['product_id' => 1, 'store_code' => 'south', 'quantity' => 5],
+            ['product_id' => 2, 'store_code' => 'north', 'quantity' => 5],
+            ['product_id' => 2, 'store_code' => 'south', 'quantity' => 3],
+            ['product_id' => 3, 'store_code' => 'north', 'quantity' => 8],
+        ]);
+        $read = $repository->read();
+        $keys = static fn($page): array => array_map(
+            static fn(object $stock): string => $stock->product_id . ':' . $stock->store_code,
+            $page->items,
+        );
+
+        $pages = array_map(
+            static fn(int $page) => $read->page(new PageRequest($page, 2, ['quantity' => 'DESC'])),
+            [1, 2, 3],
+        );
+
+        self::assertSame([['3:north', '2:north'], ['1:south', '1:north'], ['2:south']], array_map($keys, $pages));
+        self::assertSame([5, 5, 5], array_column($pages, 'total'));
+        self::assertSame(['2:north', '2:south'], $keys($read->page(new PageRequest(2, 2))));
+    }
+
     public function testQueryBuilderMatchesUnquotedAliasReferencesOnTheServer(): void
     {
         $repository = new Repository($this->connection, $this->mapping(true));

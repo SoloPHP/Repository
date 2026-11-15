@@ -167,13 +167,72 @@ final class KeylessMappingTest extends TestCase
         );
     }
 
+    public function testPagesEndTheOrderWithThePageOrderKey(): void
+    {
+        $mapping = $this->stockMapping(['product_id', 'store_id']);
+        $read = (new Repository($this->connection, $mapping))->read();
+        $keys = static fn (array $stocks): array => array_map(
+            static fn (object $stock): array => [$stock->product_id, $stock->store_id],
+            $stocks,
+        );
+
+        $byStore = $read->page(new PageRequest(1, 3, ['store_id' => 'DESC']));
+        $unordered = $read->page(new PageRequest(2, 2));
+
+        self::assertSame(['product_id', 'store_id'], $mapping->pageOrderKey);
+        self::assertSame([[3, 3], [1, 2], [2, 1]], $keys($byStore->items));
+        self::assertSame([[2, 1], [3, 3]], $keys($unordered->items));
+        self::assertSame([4, 4], [$byStore->total, $unordered->total]);
+        self::assertStringContainsString(
+            'ORDER BY "br_base"."store_id" DESC, "br_base"."product_id" DESC LIMIT 3',
+            $this->logger->queries[0],
+        );
+        self::assertStringContainsString(
+            'ORDER BY "br_base"."product_id" ASC, "br_base"."store_id" ASC LIMIT 2 OFFSET 2',
+            $this->logger->queries[2],
+        );
+    }
+
+    /** @param array<mixed> $pageOrderKey */
+    #[DataProvider('invalidPageOrderKeys')]
+    public function testThePageOrderKeyNamesBaseColumnsOfAMappingWithoutAPrimaryKey(
+        ?string $primaryKey,
+        array $pageOrderKey,
+        string $message,
+    ): void {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage($message);
+
+        new Mapping(
+            'stocks',
+            ['product_id' => Types::INTEGER, 'store_id' => Types::INTEGER],
+            self::object(...),
+            primaryKey: $primaryKey,
+            generatedId: false,
+            pageOrderKey: $pageOrderKey,
+        );
+    }
+
+    public static function invalidPageOrderKeys(): iterable
+    {
+        yield 'with a primary key' => [
+            'product_id',
+            ['store_id'],
+            'Only a mapping without a primary key takes a page order key.',
+        ];
+        yield 'unknown column' => [null, ['product_id', 'shelf_id'], 'Unknown mapped column "shelf_id".'];
+        yield 'repeated column' => [null, ['product_id', 'product_id'], 'A page order key must name each column once.'];
+        yield 'keyed by names' => [null, ['first' => 'product_id'], 'A page order key must list column names.'];
+        yield 'not a name' => [null, [1], 'A page order key must list column names.'];
+    }
+
     public function testKeysetIterationUnorderedPagesAndRowsOfOnlyDefaultsAreRejectedBeforeSql(): void
     {
         $operations = [
             'Keyset iteration requires an integer primary key.' => static fn (Repository $stocks): mixed
                 => $stocks->read()->iterateById(),
-            'Pages of mapping "stocks" need an order: it has no primary key.' => static fn (Repository $stocks): mixed
-                => $stocks->read()->page(new PageRequest(1, 2)),
+            'Pages of mapping "stocks" need an order: it has neither a primary key nor a page order key.'
+                => static fn (Repository $stocks): mixed => $stocks->read()->page(new PageRequest(1, 2)),
             'Rows of a mapping without a primary key need at least one column.' => static fn (Repository $stocks): mixed
                 => $stocks->insertMany([[]]),
         ];
@@ -335,7 +394,8 @@ final class KeylessMappingTest extends TestCase
         self::assertSame(['EUR' => [[1, 1], [3, 3]], 'UAH' => [[1, 2]]], $byCurrency);
     }
 
-    private function stockMapping(): Mapping
+    /** @param list<string> $pageOrderKey */
+    private function stockMapping(array $pageOrderKey = []): Mapping
     {
         return new Mapping(
             table: 'stocks',
@@ -357,6 +417,7 @@ final class KeylessMappingTest extends TestCase
                     self::assign('currency'),
                 ),
             ],
+            pageOrderKey: $pageOrderKey,
         );
     }
 
